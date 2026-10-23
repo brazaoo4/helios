@@ -1,0 +1,73 @@
+# ==============================================================================
+# Helios — Declarative Baseline Seed Template (seed.example.yaml)
+# ==============================================================================
+# Copy this file to `/data/seed.yaml` (or `./data/seed.yaml` when mounted via
+# Docker Compose). On startup, Helios will automatically ingest all memories
+# and aliases, sync Markdown exports, and atomically rename the file to
+# `seed.yaml.imported`.
+# ==============================================================================
+
+aliases:
+  frontend-v2: web
+  backend-api: api
+  infra-ops: infrastructure
+
+memories:
+  # --- Global Architectural Rules ---
+  - scope: global
+    category: rule
+    subject: pre-flight-check
+    content: Always inspect docs/ARCHITECTURE.md as single source of truth before modifying stacks or networks.
+    anchor_files:
+      - docs/ARCHITECTURE.md
+
+  - scope: global
+    category: rule
+    subject: docs-sync-mandate
+    content: Synchronously update docs/ARCHITECTURE.md and README.md whenever service or networking configs change.
+    anchor_files:
+      - docs/ARCHITECTURE.md
+      - README.md
+
+  - scope: global
+    category: rule
+    subject: token-diet
+    content: Keep terminal command outputs concise; always use tail, silent flags, and grep.
+    anchor_files: []
+
+  - scope: global
+    category: rule
+    subject: code-generation
+    content: Output only modified blocks or unified diffs rather than entire redundant files.
+    anchor_files: []
+
+  # --- Helios Engine Facts ---
+  - scope: helios
+    category: fact
+    subject: mcp-transport
+    content: Helios MCP exposes Streamable HTTP on /sse and /mcp, with legacy SSE fallback for older clients.
+    anchor_files:
+      - src/server.py
+
+  - scope: helios
+    category: rule
+    subject: atomic-word-limit
+    content: AUDN Write Gate strictly enforces a <= 25-word limit per atomic memory fact.
+    anchor_files:
+      - src/db.py
+
+  - scope: helios
+    category: fact
+    subject: storage-engine
+    content: Helios uses SQLite with WAL mode, busy_timeout=10000, and FTS5 BM25 search for sub-millisecond retrieval.
+    anchor_files:
+      - src/db.py
+
+  # --- Example Application Scope ---
+  - scope: web
+    category: fact
+    subject: runtime-port
+    content: Web application runs on internal port 3000 behind reverse proxy with strict CSP headers.
+    anchor_files:
+      - docker-compose.yml
+      - package.json

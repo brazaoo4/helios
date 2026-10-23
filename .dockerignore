@@ -1,0 +1,30 @@
+# Virtual environment & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases and exports
+/data/
+/test_data/
+*.db
+*.db-wal
+*.db-shm
+*.tar.gz
+
+# Git & IDE configs
+.git/
+.gitignore
+.forgejo/
+.idea/
+.vscode/
+*.swp
+.history/
+
+# Docs and tasks
+TASKS.md
+README.md

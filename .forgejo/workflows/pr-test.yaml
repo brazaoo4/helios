@@ -1,0 +1,47 @@
+name: PR Test Suite
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-test-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch from internal Forgejo
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          auth="$(printf 'x-access-token:%s' "${FORGEJO_TOKEN}" | base64 | tr -d '\n')"
+          forgejo_url="${FORGEJO_INTERNAL_URL:-http://forgejo:3000}"
+          repo_url="${forgejo_url}/${FORGEJO_REPOSITORY}.git"
+
+          git init .
+          git remote add origin "${repo_url}"
+          git -c http.extraHeader="AUTHORIZATION: basic ${auth}" \
+            fetch --depth 1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
+
+      - name: Run unit test suite & seed invariants check
+        env:
+          MEMORY_DATA_DIR: /tmp/helios_pr_test_data
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m src.seed --check
+          pytest tests/ -v
+
+      - name: Verify Docker image build
+        run: |
+          set -euo pipefail
+          docker build -t helios:pr-test .

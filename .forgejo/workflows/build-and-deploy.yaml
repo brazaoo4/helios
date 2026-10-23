@@ -1,0 +1,113 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      REGISTRY: ${{ secrets.REGISTRY_HOST || 'forgejo.example.com' }}
+      IMAGE: ${{ secrets.REGISTRY_HOST || 'forgejo.example.com' }}/${{ github.repository }}/app
+
+    steps:
+      - name: Checkout source from internal Forgejo
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          auth="$(printf 'x-access-token:%s' "${FORGEJO_TOKEN}" | base64 | tr -d '\n')"
+          forgejo_url="${FORGEJO_INTERNAL_URL:-http://forgejo:3000}"
+
+          git -c http.extraHeader="AUTHORIZATION: basic ${auth}" \
+            clone --depth 1 \
+            "${forgejo_url}/${FORGEJO_REPOSITORY}.git" \
+            .
+
+      - name: Verify Docker access
+        run: |
+          echo "DOCKER_HOST=${DOCKER_HOST}"
+          getent hosts forgejo-dind.docker.internal
+          docker version
+
+      - name: Run unit test suite
+        env:
+          MEMORY_DATA_DIR: /tmp/helios_ci_test_data
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pytest tests/ -v
+
+      - name: Log in to Forgejo Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Promote image to the deployment stack
+        env:
+          DEPLOYMENTS_REPO_TOKEN: ${{ secrets.DEPLOYMENTS_REPO_TOKEN }}
+          DOCKHAND_STACK_ID: ${{ secrets.DOCKHAND_STACK_ID }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          forgejo_url="${FORGEJO_INTERNAL_URL:-http://forgejo:3000}"
+          deploy_repo="${DEPLOYMENTS_REPO:-${GITHUB_REPOSITORY_OWNER}/deployments}"
+
+          git clone --depth 1 \
+            "http://deploy-bot:${DEPLOYMENTS_REPO_TOKEN}@${forgejo_url#http://}/${deploy_repo}.git" \
+            deployments
+
+          cd deployments
+
+          mkdir -p helios
+          touch helios/.env
+          if grep -q '^IMAGE_TAG=' helios/.env; then
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" helios/.env
+          else
+            printf 'IMAGE_TAG=%s\n' "${IMAGE_TAG}" >> helios/.env
+          fi
+
+          git config user.name "deploy-bot"
+          git config user.email "deploy-bot@localhost"
+
+          git add helios/.env
+
+          if git diff --cached --quiet; then
+            echo "Deployment already points at ${IMAGE_TAG}; nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "deploy(helios): ${IMAGE_TAG}"
+          git pull --rebase origin main
+          git push origin main
+
+          if [ -n "${DOCKHAND_STACK_ID:-}" ]; then
+            curl -fsSL -X POST "http://dockhand:3000/api/git/stacks/${DOCKHAND_STACK_ID}/webhook" || true
+          fi
