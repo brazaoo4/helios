@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      FORGEJO_INTERNAL_URL: ${{ vars.FORGEJO_INTERNAL_URL }}
+      FORGEJO_INTERNAL_URL: ${{ vars.INTERNAL_FORGE_URL }}
       REGISTRY: ${{ secrets.REGISTRY_HOST || 'forgejo.example.com' }}
       IMAGE: ${{ secrets.REGISTRY_HOST || 'forgejo.example.com' }}/${{ github.repository }}/app
 

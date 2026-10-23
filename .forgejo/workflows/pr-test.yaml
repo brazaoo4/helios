@@ -13,7 +13,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      FORGEJO_INTERNAL_URL: ${{ vars.FORGEJO_INTERNAL_URL }}
+      FORGEJO_INTERNAL_URL: ${{ vars.INTERNAL_FORGE_URL }}
 
     steps:
       - name: Checkout PR branch from internal Forgejo
