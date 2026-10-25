@@ -154,7 +154,7 @@ def generate_global_directive(
             "5. **Terminal Token Diet (Headless Host)**:\n"
             "   - Never run unbounded logs. Always use `docker logs --tail=50`, `journalctl -n 40 --no-pager`, and `git status -s`.\n"
             "   - Generate targeted unified diffs or minimal block replacements rather than entire redundant files.\n"
-            "6. **Session Memory Maintenance**: Call `save_memory()` before ending a session if ports, paths, or architectural parameters changed."
+            "6. **Session Memory Maintenance**: Before ending any session, run `/remember` or call `save_memory()` to capture architectural decisions, new tools/endpoints, changed ports/paths, or non-obvious bug fixes."
         )
     else:
         # Workstation / IDE environment (default)
@@ -166,7 +166,7 @@ def generate_global_directive(
             "2. **Stale Memory Protocol**: When a memory is flagged `[STALE]`, inspect the referenced `anchor_files` before relying on it:\n"
             "   - If still accurate: call `revalidate_memories(memory_ids=[<id>])`.\n"
             "   - If updated: call `save_memory(scope=..., category='fact', content=..., subject='...')`.\n"
-            "3. **Architectural Updates**: When adding dependencies, changing ports, or establishing conventions, persist them immediately with `save_memory()`.\n"
+            "3. **Architectural Updates & Session Maintenance**: When adding dependencies, changing ports, establishing conventions, or fixing non-obvious bugs, persist them immediately or at session close with `save_memory()`.\n"
             f"4. **AUDN Write Gate**: Keep facts atomic and **<= {limit} words**. Omit conversational filler. Never store API secrets or bulky code dumps.\n"
             "5. **Session Wrap-Up**: Call the `/remember` skill or `save_memory()` before clearing context to record key findings."
         )
