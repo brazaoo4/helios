@@ -3,9 +3,10 @@ import hashlib
 import hmac
 import json
 import os
-from typing import AsyncGenerator
+from typing import Annotated, AsyncGenerator, Literal, Optional
 
 import anyio
+from pydantic import Field
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -32,9 +33,11 @@ from src.db import (
     get_connection,
     init_db,
     list_aliases,
+    migrate_scope,
     query_memories,
     remove_alias,
     resolve_scope,
+    revalidate_memories as db_revalidate_memories,
     set_alias,
     upsert_memory,
 )
@@ -123,10 +126,12 @@ COLD_START_ONBOARDING_NOTICE = (
 # 2. FastMCP Tool Definitions
 @mcp.tool()
 def recall_memories(
-    scope: str = "global",
-    query: str = "",
-    limit: int = 8,
-    include_global: bool = True,
+    scope: Annotated[str, Field(default="global", description="Project, repository, or directory name (e.g., 'homelab', 'ticketera', 'global').")] = "global",
+    query: Annotated[str, Field(default="", description="Natural language search query or keywords to match via FTS5 BM25.")] = "",
+    category: Annotated[Literal["rule", "fact", "preference", "episodic"] | None, Field(default=None, description="Optional filter to retrieve only a specific category (e.g., 'rule' for coding guardrails).")] = None,
+    status_filter: Annotated[Literal["all", "active", "stale"], Field(default="all", description="Filter by drift status: 'all' (default), 'active' only, or 'stale' only (to audit drifted memories).")] = "all",
+    limit: Annotated[int, Field(default=8, ge=1, le=50, description="Maximum number of memories to return (clamped between 1 and 50).")] = 8,
+    include_global: Annotated[bool, Field(default=True, description="Whether to include global guardrails and rules alongside scope-specific memories.")] = True,
 ) -> str:
     """
     Recall active memories from Helios using FTS5 BM25 search.
@@ -137,6 +142,8 @@ def recall_memories(
             query=query,
             include_global=include_global,
             limit=limit,
+            category=category,
+            status_filter=status_filter,
         )
         if not memories:
             resolved = resolve_scope(scope)
@@ -161,12 +168,12 @@ def recall_memories(
 
 @mcp.tool()
 def save_memory(
-    scope: str,
-    category: str,
-    content: str,
-    subject: str = "",
-    anchor_files: list[str] | None = None,
-    replaces_id: int | None = None,
+    scope: Annotated[str, Field(description="Project, repository, or directory name (e.g., 'homelab', 'ticketera', 'global').")],
+    category: Annotated[Literal["rule", "fact", "preference", "episodic"], Field(description="Memory classification: 'rule' (guardrails), 'fact' (architecture/ports), 'preference' (style), 'episodic' (temporary 14d notes).")],
+    content: Annotated[str, Field(description="Atomic memory statement. STRICT LIMIT: MUST be <= 25 words. Omit filler words.")],
+    subject: Annotated[str, Field(default="", description="Deterministic slot key (e.g., 'app-port', 'db-stack'). Saving with an existing (scope, subject) automatically supersedes the old fact.")] = "",
+    anchor_files: Annotated[list[str] | None, Field(default=None, description="Repo-relative file paths (e.g., ['docker-compose.yml']). Git commits touching these files auto-flag this memory as [STALE].")] = None,
+    replaces_id: Annotated[int | None, Field(default=None, description="Optional explicit memory ID to supersede.")] = None,
 ) -> str:
     """
     Save or update a memory in Helios (AUDN Write Gate).
@@ -196,8 +203,8 @@ def save_memory(
 
 @mcp.tool()
 def deprecate_memory(
-    memory_id: int,
-    reason: str = "",
+    memory_id: Annotated[int, Field(description="Integer ID of the active or stale memory to retire/archive.")],
+    reason: Annotated[str, Field(default="", description="Reason for deprecating the memory (e.g., 'replaced by microservice', 'obsolete config').")] = "",
 ) -> str:
     """
     Deprecate (archive) an active or stale memory that is obsolete.
@@ -212,8 +219,8 @@ def deprecate_memory(
 
 @mcp.tool()
 def recall_history(
-    scope: str = "global",
-    limit: int = 10,
+    scope: Annotated[str, Field(default="global", description="Project, repository, or directory name to retrieve historical audit trail for.")] = "global",
+    limit: Annotated[int, Field(default=10, ge=1, le=25, description="Maximum number of historical records to return (capped at 25).")] = 10,
 ) -> str:
     """
     Inspect previously superseded or archived memories for time-travel debugging
@@ -250,6 +257,33 @@ def recall_history(
 
 
 @mcp.tool()
+def revalidate_memories(
+    memory_ids: Annotated[list[int], Field(description="List of stale memory IDs to revalidate and mark back as 'active'.")],
+) -> str:
+    """
+    Batch revalidate stale memories back to 'active' status after auditing anchor files.
+    """
+    try:
+        res = db_revalidate_memories(memory_ids)
+        revalidated = res["revalidated_ids"]
+        not_stale = res["not_found_or_not_stale_ids"]
+        if revalidated:
+            sync_markdown_exports()
+
+        if revalidated and not not_stale:
+            return f"Revalidated {len(revalidated)} memories: {', '.join(f'#{i}' for i in revalidated)}."
+        elif revalidated and not_stale:
+            return (
+                f"Revalidated {len(revalidated)} memories: {', '.join(f'#{i}' for i in revalidated)}. "
+                f"Skipped {len(not_stale)} (not found or not stale): {', '.join(f'#{i}' for i in not_stale)}."
+            )
+        else:
+            return f"No memories revalidated. Provided IDs were not found or not stale: {', '.join(f'#{i}' for i in not_stale)}."
+    except Exception as exc:
+        return f"Error revalidating memories: {exc}"
+
+
+@mcp.tool()
 def export_bundle() -> str:
     """
     Generate a complete, portable archive snapshot (helios_portable_bundle.tar.gz)
@@ -264,12 +298,17 @@ def export_bundle() -> str:
 
 
 @mcp.tool()
-def manage_scope_alias(alias: str = "", canonical_scope: str = "", action: str = "set") -> str:
+def manage_scope_alias(
+    alias: Annotated[str, Field(default="", description="Source alias or folder name (e.g., 'ticket-tracker').")] = "",
+    canonical_scope: Annotated[str, Field(default="", description="Target canonical scope name (e.g., 'ticketera').")] = "",
+    action: Annotated[Literal["set", "remove", "list", "rename"], Field(default="set", description="Action to perform: 'set' (map alias), 'remove' (delete alias), 'list' (show all), or 'rename' (migrate all memories to new scope and register alias).")] = "set",
+) -> str:
     """
     Manage project and folder aliases mapping to canonical memory scopes.
     - action='set': Maps alias -> canonical_scope (e.g. 'frontend-v2' -> 'web').
     - action='remove': Deletes an existing alias mapping.
     - action='list': Returns all current alias-to-scope mappings.
+    - action='rename': Migrates all memories from alias to canonical_scope and registers alias.
     """
     try:
         act = (action or "").strip().lower()
@@ -292,8 +331,15 @@ def manage_scope_alias(alias: str = "", canonical_scope: str = "", action: str =
                 return "No scope aliases configured."
             lines = [f"- `{k}` -> `{v}`" for k, v in mappings.items()]
             return "\n".join(lines)
+        elif act == "rename":
+            res = migrate_scope(from_scope=alias, to_scope=canonical_scope, register_alias=True)
+            sync_markdown_exports()
+            return (
+                f"Scope '{res['from_scope']}' migrated to '{res['to_scope']}' "
+                f"({res['migrated_count']} memories moved). Alias registered."
+            )
         else:
-            return f"Invalid action '{action}'. Must be 'set', 'remove', or 'list'."
+            return f"Invalid action '{action}'. Must be 'set', 'remove', 'list', or 'rename'."
     except Exception as exc:
         return f"Error managing scope alias: {exc}"
 

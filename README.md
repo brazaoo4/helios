@@ -32,12 +32,65 @@ It provides sub-millisecond full-text retrieval via **SQLite FTS5 (BM25)**, dete
 
 | Tool | Description |
 | :--- | :--- |
-| `recall_memories(scope, query, limit, include_global)` | Search active/stale memories in `<scope>` (plus `global`) using FTS5 BM25 ranking or categorical priority (`rule` $\rightarrow$ `fact` $\rightarrow$ `preference` $\rightarrow$ `episodic`). |
+| `recall_memories(scope, query, category, status_filter, limit, include_global)` | Search active/stale memories in `<scope>` (plus `global`) using FTS5 BM25 ranking or categorical priority (`rule` $\rightarrow$ `fact` $\rightarrow$ `preference` $\rightarrow$ `episodic`). Supports filtering by category (`rule`, `fact`, `preference`, `episodic`) and status (`all`, `active`, `stale`). |
 | `save_memory(scope, category, content, subject, anchor_files, replaces_id)` | Create or supersede an atomic memory ($\le$ `HELIOS_WORD_LIMIT` words) and sync Markdown exports. |
+| `revalidate_memories(memory_ids)` | Batch revalidate stale memories back to `active` status after inspecting modified `anchor_files`. |
 | `deprecate_memory(memory_id, reason)` | Archive an obsolete memory and log it to the scope changelog. |
 | `recall_history(scope, limit)` | Inspect superseded and archived memories for time-travel debugging and audit history. |
-| `manage_scope_alias(alias, canonical_scope, action)` | Manage dynamic project/folder aliases (`set`, `remove`, `list`) mapping to canonical memory scopes. |
+| `manage_scope_alias(alias, canonical_scope, action)` | Manage dynamic project/folder aliases (`set`, `remove`, `list`) or migrate/rename scopes (`rename`). |
 | `export_bundle()` | Create a fresh online SQLite backup and package `helios_portable_bundle.tar.gz`. |
+
+---
+
+## Universal Webhook Provisioning & Drift Tracking
+
+Helios tracks configuration drift automatically when commits touch memory `anchor_files`. To connect your Git repositories to Helios:
+
+### 1. Backfilling Existing Repositories (`scripts/sync_webhooks.py`)
+
+A standalone, provider-agnostic CLI script is included to inspect all existing repositories and idempotently register push webhooks (`POST /webhook/git` with JSON payload and HMAC secret):
+
+```bash
+# Forgejo / Gitea
+python scripts/sync_webhooks.py \
+  --provider forgejo \
+  --api-url https://git.example.com \
+  --token "$GIT_API_TOKEN" \
+  --webhook-url https://helios.example.com/webhook/git \
+  --webhook-secret "$HELIOS_WEBHOOK_SECRET"
+
+# GitHub
+python scripts/sync_webhooks.py \
+  --provider github \
+  --token "$GITHUB_TOKEN" \
+  --owner my-org \
+  --webhook-url https://helios.example.com/webhook/git \
+  --webhook-secret "$HELIOS_WEBHOOK_SECRET"
+```
+
+Environment variables `GIT_API_URL`, `GIT_API_TOKEN`, `GIT_OWNER`, `HELIOS_WEBHOOK_URL`, and `HELIOS_WEBHOOK_SECRET` are read automatically if flags are omitted.
+
+### 2. Zero-Script Setup for New Repositories (Default & Org Webhooks)
+
+To automatically provision Helios drift webhooks on all future repositories without running scripts:
+
+- **Forgejo / Gitea Default Webhook**:
+  1. Navigate to **Site Administration** $\rightarrow$ **Default Webhooks** (`/admin/hooks`).
+  2. Click **Add Webhook** $\rightarrow$ **Gitea** (or Forgejo).
+  3. Set **Target URL** to `https://<helios-host>/webhook/git`.
+  4. Set **HTTP Method** to `POST` and **Content Type** to `application/json`.
+  5. Fill in the **Secret** matching `HELIOS_WEBHOOK_SECRET`.
+  6. Under **Trigger On**, select **Push Events**.
+  7. Save. Every newly created repository on your Git server automatically inherits this webhook.
+
+- **GitHub Organization Webhook**:
+  1. Navigate to your Organization $\rightarrow$ **Settings** $\rightarrow$ **Webhooks** (`https://github.com/organizations/<org>/settings/hooks`).
+  2. Click **Add webhook**.
+  3. Set **Payload URL** to `https://<helios-host>/webhook/git`.
+  4. Set **Content type** to `application/json`.
+  5. Enter the **Secret** matching `HELIOS_WEBHOOK_SECRET`.
+  6. Under events, select **Just the push event**.
+  7. Save. All current and future repositories in the organization trigger drift evaluation on push.
 
 ---
 

@@ -151,14 +151,16 @@ def sync_markdown_exports() -> list[str]:
             elif hist_file.exists():
                 hist_file.unlink()
 
-    # Clean up orphaned Markdown files from deleted scopes
-    for existing_md in export_dir.glob("*.md"):
-        if existing_md not in expected_active_files:
-            existing_md.unlink(missing_ok=True)
+    # Clean up orphaned Markdown files from deleted or migrated scopes
+    if export_dir.exists():
+        for existing_md in export_dir.glob("*.md"):
+            if existing_md not in expected_active_files:
+                existing_md.unlink(missing_ok=True)
 
-    for existing_hist in changelog_dir.glob("*_history.md"):
-        if existing_hist not in expected_hist_files:
-            existing_hist.unlink(missing_ok=True)
+    if changelog_dir.exists():
+        for existing_hist in changelog_dir.glob("*.md"):
+            if existing_hist not in expected_hist_files:
+                existing_hist.unlink(missing_ok=True)
 
     return written_paths
 

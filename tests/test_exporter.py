@@ -3,7 +3,7 @@ import tarfile
 from pathlib import Path
 import pytest
 
-from src.db import flag_stale_by_files, get_connection, init_db, set_alias, upsert_memory
+from src.db import flag_stale_by_files, get_connection, init_db, migrate_scope, set_alias, upsert_memory
 from src.exporter import (
     atomic_write,
     create_portable_archive,
@@ -166,3 +166,36 @@ def test_create_portable_archive(tmp_path):
 
     assert integrity == "ok"
     assert count == 2
+
+
+def test_sync_markdown_exports_cleanup_on_scope_migration():
+    # Create active memory and supersede one to have both active.md and changelog_history.md
+    m1 = upsert_memory("ticket-tracker", "fact", "Old port was 3000", subject="app-port")
+    upsert_memory("ticket-tracker", "fact", "New port is 3001", subject="app-port")
+
+    sync_markdown_exports()
+
+    export_dir = get_export_dir()
+    changelog_dir = get_changelog_dir()
+
+    old_active = export_dir / "ticket-tracker.md"
+    old_hist = changelog_dir / "ticket-tracker_history.md"
+
+    assert old_active.exists()
+    assert old_hist.exists()
+
+    # Migrate scope from ticket-tracker to ticketera
+    migrate_scope("ticket-tracker", "ticketera", register_alias=True)
+    sync_markdown_exports()
+
+    new_active = export_dir / "ticketera.md"
+    new_hist = changelog_dir / "ticketera_history.md"
+
+    # New files should exist
+    assert new_active.exists()
+    assert new_hist.exists()
+
+    # Ghost files from old scope must be cleaned up
+    assert not old_active.exists()
+    assert not old_hist.exists()
+

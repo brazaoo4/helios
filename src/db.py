@@ -212,6 +212,90 @@ def resolve_scope(raw_scope: str) -> str:
         return folder_name
 
 
+def migrate_scope(from_scope: str, to_scope: str, register_alias: bool = True) -> dict:
+    """
+    Migrate all memories from from_scope to to_scope.
+    
+    - Validates and normalizes scope names.
+    - Resolves active slot collisions by superseding older records (by valid_from / id).
+    - Updates all rows in memories where scope = from_clean to to_clean.
+    - If register_alias=True, registers (from_clean, to_clean) in scope_aliases
+      and repoints existing aliases targeting from_clean to to_clean.
+    - Returns {"from_scope": from_clean, "to_scope": to_clean, "migrated_count": rowcount, "alias_registered": register_alias}.
+    """
+    from_clean = _normalize_alias_key(from_scope)
+    to_clean = _normalize_alias_key(to_scope)
+    if not from_clean:
+        raise ValueError("Source scope cannot be empty.")
+    if not to_clean:
+        raise ValueError("Target scope cannot be empty.")
+    if from_clean == to_clean:
+        raise ValueError("Source and target scopes cannot be identical.")
+
+    ts = now_iso()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # 1. Resolve active slot collisions for non-empty subjects
+        colliding_rows = conn.execute(
+            """
+            SELECT id, scope, subject, valid_from
+            FROM memories
+            WHERE scope IN (?, ?) AND status IN ('active', 'stale') AND valid_to IS NULL AND subject != ''
+            ORDER BY valid_from ASC, id ASC
+            """,
+            (from_clean, to_clean),
+        ).fetchall()
+
+        by_subject: dict[str, list[sqlite3.Row]] = {}
+        for r in colliding_rows:
+            by_subject.setdefault(r["subject"], []).append(r)
+
+        for subj, rows in by_subject.items():
+            scopes_present = {r["scope"] for r in rows}
+            if from_clean in scopes_present and to_clean in scopes_present:
+                # rows are sorted by valid_from ASC, id ASC; last one is newest (winner)
+                winner = rows[-1]
+                for older in rows[:-1]:
+                    conn.execute(
+                        "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
+                        (ts, winner["id"], older["id"]),
+                    )
+
+        # 2. Update all memories from from_clean to to_clean
+        cur = conn.execute(
+            "UPDATE memories SET scope = ? WHERE scope = ?",
+            (to_clean, from_clean),
+        )
+        migrated_count = cur.rowcount
+
+        # 3. Register and repoint aliases if requested
+        if register_alias:
+            conn.execute(
+                """
+                INSERT INTO scope_aliases (alias, canonical_scope)
+                VALUES (?, ?)
+                ON CONFLICT(alias) DO UPDATE SET canonical_scope = excluded.canonical_scope
+                """,
+                (from_clean, to_clean),
+            )
+            conn.execute(
+                "UPDATE scope_aliases SET canonical_scope = ? WHERE canonical_scope = ? AND alias != ?",
+                (to_clean, from_clean, to_clean),
+            )
+            conn.execute(
+                "DELETE FROM scope_aliases WHERE alias = ?",
+                (to_clean,),
+            )
+
+        return {
+            "from_scope": from_clean,
+            "to_scope": to_clean,
+            "migrated_count": migrated_count,
+            "alias_registered": register_alias,
+        }
+
+
 def prune_expired_episodic() -> int:
     """
     Archive temporary 'episodic' memories unaccessed for more than HELIOS_EPISODIC_TTL_DAYS days.
@@ -307,7 +391,7 @@ def upsert_memory(
             ).fetchone()
             if not old_rec:
                 raise ValueError(f"replaces_id {replaces_id} does not exist or is already superseded.")
-            if old_rec["scope"] != scope:
+            if resolve_scope(old_rec["scope"]) != scope:
                 raise ValueError(
                     f"Cannot supersede memory across different scopes ('{old_rec['scope']}' -> '{scope}')."
                 )
@@ -361,6 +445,8 @@ def query_memories(
     query: str = "",
     include_global: bool = True,
     limit: int = 8,
+    category: str | None = None,
+    status_filter: str = "all",
 ) -> list[dict]:
     """
     Retrieve active memories using FTS5 BM25 search or prioritized categorical fallback.
@@ -368,6 +454,8 @@ def query_memories(
     - Prunes expired episodic memories first.
     - Searches both the resolved scope and 'global' (if include_global=True).
     - Clamps limit between 1 and 50.
+    - Supports optional category filter ('rule', 'fact', 'preference', 'episodic').
+    - Supports status_filter ('all' -> active & stale, 'active' -> active only, 'stale' -> stale only).
     - Increments hit_count and updates last_accessed for returned rows.
     """
     prune_expired_episodic()
@@ -380,20 +468,44 @@ def query_memories(
     placeholders = ",".join("?" for _ in scopes)
     ts = now_iso()
 
+    norm_status = (status_filter or "all").strip().lower()
+    if norm_status == "active":
+        status_clause_m = "m.status = 'active'"
+        status_clause_bare = "status = 'active'"
+    elif norm_status == "stale":
+        status_clause_m = "m.status = 'stale'"
+        status_clause_bare = "status = 'stale'"
+    else:
+        status_clause_m = "m.status IN ('active', 'stale')"
+        status_clause_bare = "status IN ('active', 'stale')"
+
+    cat_clean = category.strip().lower() if category and category.strip() else None
+    cat_clause_m = "AND m.category = ?" if cat_clean else ""
+    cat_clause_bare = "AND category = ?" if cat_clean else ""
+    cat_params = [cat_clean] if cat_clean else []
+
     with get_connection() as conn:
         if query.strip():
-            # 1. Extract valid words/numbers/tokens, stripping stray punctuation
-            raw_tokens = re.findall(r"[a-zA-Z0-9_-]+", query)
-            clean_tokens = [tok.strip("-_") for tok in raw_tokens if tok.strip("-_")]
+            # 1. Extract valid words/numbers/tokens, preserving technical punctuation (dots, colons)
+            clean_query = query.replace('"', ' ').replace('\x00', ' ')
+            raw_tokens = re.findall(r"[a-zA-Z0-9_.:-]+", clean_query)
+            clean_tokens = []
+            for tok in raw_tokens:
+                t = tok.strip("-_.:*")
+                if not t:
+                    continue
+                if t.upper() in ("AND", "OR", "NOT"):
+                    continue
+                clean_tokens.append(t)
 
-            # If multiple tokens exist (e.g. split IP 10.0.0.150), drop 1-digit pure numbers
+            # If multiple tokens exist (e.g. split IP), drop 1-digit pure numbers
             # like "1" so they don't prefix-match every number starting with 1 (100G, 1000, etc.)
             if len(clean_tokens) > 1:
                 filtered = [t for t in clean_tokens if not (t.isdigit() and len(t) == 1)]
                 if filtered:
                     clean_tokens = filtered
 
-            # If user query was only punctuation (e.g. '***:::'), return empty list safely
+            # If user query was only punctuation/operators (e.g. '***:::'), return empty list safely
             if not clean_tokens:
                 return []
 
@@ -409,13 +521,14 @@ def query_memories(
                     FROM memories_fts f
                     JOIN memories m ON f.rowid = m.id
                     WHERE m.scope IN ({placeholders})
-                      AND m.status IN ('active', 'stale')
+                      AND {status_clause_m}
                       AND m.valid_to IS NULL
+                      {cat_clause_m}
                       AND memories_fts MATCH ?
                     ORDER BY bm25(memories_fts), m.hit_count DESC
                     LIMIT ?
                     """,
-                    (*scopes, fts_query, limit),
+                    (*scopes, *cat_params, fts_query, limit),
                 ).fetchall()
             except sqlite3.OperationalError:
                 # Failsafe fallback: return empty list on any syntax anomaly
@@ -427,8 +540,9 @@ def query_memories(
                 SELECT id, scope, category, subject, content, status, stale_reason, anchor_files
                 FROM memories
                 WHERE scope IN ({placeholders})
-                  AND status IN ('active', 'stale')
+                  AND {status_clause_bare}
                   AND valid_to IS NULL
+                  {cat_clause_bare}
                 ORDER BY
                     CASE category
                         WHEN 'rule' THEN 1
@@ -440,7 +554,7 @@ def query_memories(
                     id DESC
                 LIMIT ?
                 """,
-                (*scopes, limit),
+                (*scopes, *cat_params, limit),
             ).fetchall()
 
         results = [dict(r) for r in rows]
@@ -536,4 +650,47 @@ def deprecate_memory(memory_id: int, reason: str = "") -> dict:
             "scope": row["scope"],
             "subject": row["subject"],
             "content": row["content"],
+        }
+
+
+def revalidate_memories(memory_ids: list[int]) -> dict:
+    """
+    Batch revalidate stale memories back to 'active' status.
+    For matching rows where status = 'stale' and valid_to IS NULL:
+      - sets status = 'active', stale_reason = '', last_accessed = now_iso()
+    Returns {"revalidated_ids": [...], "not_found_or_not_stale_ids": [...]}.
+    """
+    if not memory_ids:
+        return {"revalidated_ids": [], "not_found_or_not_stale_ids": []}
+
+    unique_ids = list(dict.fromkeys(memory_ids))
+    ts = now_iso()
+
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = conn.execute(
+            f"SELECT id, status, valid_to FROM memories WHERE id IN ({placeholders})",
+            unique_ids,
+        ).fetchall()
+
+        stale_ids = {r["id"] for r in rows if r["status"] == "stale" and r["valid_to"] is None}
+
+        if stale_ids:
+            update_placeholders = ",".join("?" for _ in stale_ids)
+            conn.execute(
+                f"""
+                UPDATE memories
+                SET status = 'active', stale_reason = '', last_accessed = ?
+                WHERE id IN ({update_placeholders})
+                """,
+                (ts, *stale_ids),
+            )
+
+        revalidated = [mid for mid in unique_ids if mid in stale_ids]
+        not_found_or_not_stale = [mid for mid in unique_ids if mid not in stale_ids]
+
+        return {
+            "revalidated_ids": revalidated,
+            "not_found_or_not_stale_ids": not_found_or_not_stale,
         }

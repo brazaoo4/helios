@@ -8,13 +8,16 @@ import pytest
 from starlette.testclient import TestClient
 
 from src.db import init_db, set_alias
+from src.exporter import get_export_dir
 from src.server import (
     app,
     deprecate_memory,
     export_bundle,
     manage_scope_alias,
+    mcp,
     recall_history,
     recall_memories,
+    revalidate_memories,
     save_memory,
 )
 
@@ -489,3 +492,142 @@ def test_hybrid_mcp_stale_session_fallback():
     }
     anyio.run(hybrid_handler, scope, fake_receive, fake_send)
     assert any(m.get("type") == "http.response.start" and m.get("status") == 200 for m in messages_sent)
+
+
+# --- 7. Scope Rename, Revalidation, Filtering & Pydantic Schema Inspection ---
+
+def test_manage_scope_alias_rename_action():
+    # Create memory in source scope
+    save_memory(scope="ticket-tracker", category="fact", content="Legacy ticket API port 8080", subject="api-port")
+    assert (get_export_dir() / "ticket-tracker.md").exists()
+
+    # Call manage_scope_alias with action="rename"
+    res = manage_scope_alias(alias="ticket-tracker", canonical_scope="ticketera", action="rename")
+    assert "migrated to 'ticketera'" in res
+    assert "Alias registered" in res
+
+    # Check that export was synced and ghost file was removed
+    assert not (get_export_dir() / "ticket-tracker.md").exists()
+    assert (get_export_dir() / "ticketera.md").exists()
+
+    # Recalling under ticketera returns the memory
+    recalled = recall_memories(scope="ticketera", query="8080")
+    assert "Legacy ticket API port 8080" in recalled
+
+
+def test_revalidate_memories_tool_and_markdown_sync():
+    # Save memory with anchor_file
+    save_res = save_memory(
+        scope="service-a",
+        category="fact",
+        content="Service A binds to 0.0.0.0:4000",
+        subject="host-port",
+        anchor_files=["docker-compose.yml"],
+    )
+    # Extract memory ID from string e.g. "Memory #1 created..."
+    import re
+    m_id = int(re.search(r"#(\d+)", save_res).group(1))
+
+    # Flag as stale via TestClient webhook
+    with TestClient(app) as client:
+        hook_payload = {
+            "repository": {"name": "service-a"},
+            "commits": [{"modified": ["docker-compose.yml"]}],
+            "after": "deadbeef123",
+        }
+        res = client.post("/webhook/git", json=hook_payload)
+        assert res.status_code == 200
+        assert res.json()["memories_flagged_stale"] == 1
+
+    # Verify memory is stale in recall and export
+    recalled = recall_memories(scope="service-a", status_filter="stale")
+    assert "[STALE:" in recalled
+
+    export_file = get_export_dir() / "service-a.md"
+    assert "[STALE:" in export_file.read_text(encoding="utf-8")
+
+    # Revalidate using tool
+    tool_res = revalidate_memories(memory_ids=[m_id])
+    assert f"Revalidated 1 memories: #{m_id}" in tool_res
+
+    # Check export was automatically synced and no longer has STALE
+    assert "[STALE:" not in export_file.read_text(encoding="utf-8")
+    recalled_active = recall_memories(scope="service-a", status_filter="active")
+    assert "[STALE:" not in recalled_active
+    assert "0.0.0.0:4000" in recalled_active
+
+
+def test_recall_memories_category_and_status_filter_tools():
+    save_memory(scope="shop", category="rule", content="Always use Decimal for currency", subject="money-rule")
+    save_memory(scope="shop", category="fact", content="Checkout service on port 5005", subject="checkout-port")
+
+    # Filter by category="rule"
+    rule_res = recall_memories(scope="shop", category="rule")
+    assert "Decimal for currency" in rule_res
+    assert "Checkout service" not in rule_res
+
+    # Filter by category="fact"
+    fact_res = recall_memories(scope="shop", category="fact")
+    assert "Checkout service" in fact_res
+    assert "Decimal for currency" not in fact_res
+
+    # Filter by status="stale" when none are stale
+    stale_res = recall_memories(scope="shop", status_filter="stale")
+    assert "No active memories found" in stale_res
+
+
+def test_fastmcp_tool_schema_descriptions():
+    import asyncio
+    tools = asyncio.run(mcp.list_tools())
+    tool_map = {t.name: t for t in tools}
+
+    # Verify all expected tools are registered
+    expected_tools = {
+        "recall_memories",
+        "save_memory",
+        "deprecate_memory",
+        "recall_history",
+        "revalidate_memories",
+        "manage_scope_alias",
+        "export_bundle",
+    }
+    assert expected_tools.issubset(set(tool_map.keys()))
+
+    # Inspect save_memory's schema
+    save_tool = tool_map["save_memory"]
+    schema = save_tool.inputSchema
+    properties = schema.get("properties", {})
+
+    # content description MUST contain 25-word limit notice
+    content_prop = properties.get("content", {})
+    assert "STRICT LIMIT: MUST be <= 25 words" in content_prop.get("description", "")
+
+    # category description and enum
+    cat_prop = properties.get("category", {})
+    assert set(cat_prop.get("enum", [])) == {"rule", "fact", "preference", "episodic"}
+    assert "guardrails" in cat_prop.get("description", "")
+
+    # scope description
+    scope_prop = properties.get("scope", {})
+    assert "homelab" in scope_prop.get("description", "")
+
+    # anchor_files description
+    anchors_prop = properties.get("anchor_files", {})
+    assert "docker-compose.yml" in anchors_prop.get("description", "")
+
+    # replaces_id description
+    replaces_prop = properties.get("replaces_id", {})
+    assert "supersede" in replaces_prop.get("description", "")
+
+    # Inspect recall_memories schema
+    recall_tool = tool_map["recall_memories"]
+    recall_props = recall_tool.inputSchema.get("properties", {})
+    assert "category" in recall_props
+    assert "status_filter" in recall_props
+    assert "drift status" in recall_props["status_filter"].get("description", "")
+
+    # Inspect revalidate_memories schema
+    reval_tool = tool_map["revalidate_memories"]
+    reval_props = reval_tool.inputSchema.get("properties", {})
+    assert "memory_ids" in reval_props
+    assert "stale memory IDs" in reval_props["memory_ids"].get("description", "")
