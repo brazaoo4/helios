@@ -60,7 +60,9 @@ from src.exporter import (
 )
 from src.onboarding import (
     generate_client_bundle,
+    generate_setup_bash,
     generate_setup_markdown,
+    generate_setup_powershell,
     resolve_server_base_url,
 )
 from src.seed import ingest_declarative_seed_files, is_db_empty, seed_if_empty
@@ -645,7 +647,7 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if request.method == "GET" and (path == "/health" or path == "/setup"):
+        if request.method == "GET" and (path == "/health" or path in ("/setup", "/setup.ps1", "/setup.sh")):
             return await call_next(request)
 
         if request.method == "POST" and (path.startswith("/webhook/") or path == "/hooks/git-commit"):
@@ -1010,10 +1012,36 @@ async def setup_instructions(request: Request) -> Response:
     return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
 
 
+async def setup_powershell_script(request: Request) -> Response:
+    """
+    HTTP GET /setup.ps1 endpoint returning an automated 1-liner PowerShell setup script.
+    Usage: irm https://<host>/setup.ps1 | iex
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    query_token = request.query_params.get("token")
+    script = generate_setup_powershell(base_url=base_url, query_token=query_token)
+    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+
+
+async def setup_bash_script(request: Request) -> Response:
+    """
+    HTTP GET /setup.sh endpoint returning an automated 1-liner Bash setup script.
+    Usage: curl -fsSL https://<host>/setup.sh | bash
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    query_token = request.query_params.get("token")
+    script = generate_setup_bash(base_url=base_url, query_token=query_token)
+    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+
+
 # 6. Assemble Starlette ASGI Application
 starlette_routes = [
     Route("/health", health_check, methods=["GET"]),
     Route("/setup", setup_instructions, methods=["GET"]),
+    Route("/setup.ps1", setup_powershell_script, methods=["GET"]),
+    Route("/setup.sh", setup_bash_script, methods=["GET"]),
     Route("/export/bundle", export_bundle_download, methods=["GET"]),
     Route("/export/markdown", list_markdown_exports, methods=["GET"]),
     Route("/webhook/git", git_webhook, methods=["POST"]),

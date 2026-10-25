@@ -357,12 +357,27 @@ def generate_setup_markdown(
         f"# Helios AI-Driven Client Onboarding\n\n"
         f"You are configuring a local environment to connect to **Helios** at `{clean_base}`.\n\n"
         f"{auth_notice}"
-        "## Instructions for the AI Agent:\n"
+        "## Instant 1-Liner Automated Setup:\n"
+        "To configure your local environment in 1 second without manual file editing:\n\n"
+        "- **Windows (PowerShell)**:\n"
+        "  ```powershell\n"
+        f"  irm {clean_base}/setup.ps1 | iex\n"
+        "  ```\n\n"
+        "- **Linux / macOS (Bash)**:\n"
+        "  ```bash\n"
+        f"  curl -fsSL {clean_base}/setup.sh | bash\n"
+        "  ```\n\n"
+        "---\n\n"
+        "## Instructions for the AI Agent (Manual File Configuration):\n"
+        "If not executing the 1-liner automated script above, follow these steps:\n"
         "1. Detect the current operating system (Windows, Linux, macOS) and the active client/editor.\n"
         "2. Safely read and merge the `mcpServers.helios` block into the appropriate MCP config file without clobbering existing servers.\n"
         "3. Configure the Global Agent Directive (`GEMINI.md`, `CLAUDE.md`, or `.cursor/rules/helios.mdc`). "
         "If `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists in the file, replace only that block, "
         "preserving all existing user rules.\n"
+        "   - **Windows Note**: Files may use CRLF (`\\r\\n`) line endings and `GEMINI.md` may be a symlink. "
+        "Use atomic script replacement or Python instead of exact-string multi-line matching to avoid newline mismatches.\n"
+        "   - **PowerShell Note**: Always use `curl.exe -m 10` or `Invoke-RestMethod`, never bare `curl` which can hang on standard I/O.\n"
         "4. Install the `/remember` skill into `~/.gemini/skills/remember/SKILL.md`.\n"
         "5. **Interactive Git Drift Webhook Setup (Mandatory Follow-Up)**:\n"
         "   - After verifying the MCP connection, immediately call `manage_git_webhooks(action='list')` to audit repository webhooks.\n"
@@ -401,3 +416,152 @@ def generate_setup_markdown(
         + generate_remember_skill(word_limit=active_word_limit).strip()
         + "\n```\n"
     )
+
+
+def generate_setup_powershell(base_url: str, query_token: str | None = None) -> str:
+    """
+    Generate an automated, self-contained Windows PowerShell onboarding script.
+    Usage: irm https://<host>/setup.ps1 | iex
+    Handles NTFS symlinks, CRLF line endings, and idempotent marker replacement.
+    """
+    clean_base = base_url.rstrip("/")
+    token_suffix = f"?token={query_token}" if query_token else ""
+    mcp_url = f"{clean_base}/mcp{token_suffix}"
+    active_limit = get_word_limit()
+    directive = generate_global_directive("workstation", word_limit=active_limit).strip()
+    skill = generate_remember_skill(word_limit=active_limit).strip()
+
+    return f"""# Helios Automated Client Setup for Windows PowerShell
+$ErrorActionPreference = 'Stop'
+Write-Host "Configuring Helios client environment for {clean_base}..." -ForegroundColor Cyan
+
+# 1. MCP Configuration (~/.gemini/config/mcp_config.json)
+$configDir = Join-Path $env:USERPROFILE ".gemini\\config"
+if (-not (Test-Path $configDir)) {{ New-Item -ItemType Directory -Path $configDir -Force | Out-Null }}
+$mcpConfigPath = Join-Path $configDir "mcp_config.json"
+
+$mcpData = @{{ mcpServers = @{{}} }}
+if (Test-Path $mcpConfigPath) {{
+    try {{
+        $existing = Get-Content -Path $mcpConfigPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+        if ($existing -and $existing.ContainsKey("mcpServers")) {{
+            $mcpData = $existing
+        }}
+    }} catch {{
+        Write-Warning "Could not parse existing mcp_config.json; initializing fresh server map."
+    }}
+}}
+if (-not $mcpData.ContainsKey("mcpServers") -or $null -eq $mcpData.mcpServers) {{
+    $mcpData.mcpServers = @{{}}
+}}
+$mcpData.mcpServers["helios"] = @{{ url = "{mcp_url}" }}
+$mcpJson = $mcpData | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($mcpConfigPath, $mcpJson, [System.Text.Encoding]::UTF8)
+Write-Host "  [OK] MCP server registered in $mcpConfigPath" -ForegroundColor Green
+
+# 2. Global Directive (GEMINI.md with CRLF and symlink handling)
+$geminiPath = Join-Path $configDir "GEMINI.md"
+$directiveText = @"
+{directive}
+"@
+
+if (Test-Path $geminiPath) {{
+    $resolvedPath = (Resolve-Path $geminiPath).Path
+    $content = [System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)
+    if ($content -match '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->') {{
+        $content = [regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', $directiveText)
+    }} else {{
+        $content = $directiveText + "`r`n`r`n" + $content
+    }}
+    [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.Encoding]::UTF8)
+}} else {{
+    [System.IO.File]::WriteAllText($geminiPath, $directiveText, [System.Text.Encoding]::UTF8)
+}}
+Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Green
+
+# 3. /remember Skill (~/.gemini/skills/remember/SKILL.md)
+$skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
+if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
+$skillPath = Join-Path $skillDir "SKILL.md"
+$skillText = @"
+{skill}
+"@
+[System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
+Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
+
+Write-Host "`nHelios setup complete! Restart Antigravity IDE / CLI and call manage_git_webhooks(action='list') to verify." -ForegroundColor Cyan
+"""
+
+
+def generate_setup_bash(base_url: str, query_token: str | None = None) -> str:
+    """
+    Generate an automated Linux/macOS bash onboarding script.
+    Usage: curl -fsSL https://<host>/setup.sh | bash
+    """
+    clean_base = base_url.rstrip("/")
+    token_suffix = f"?token={query_token}" if query_token else ""
+    mcp_url = f"{clean_base}/mcp{token_suffix}"
+    active_limit = get_word_limit()
+    directive = generate_global_directive("workstation", word_limit=active_limit).strip()
+    skill = generate_remember_skill(word_limit=active_limit).strip()
+
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Configuring Helios client environment for {clean_base}..."
+
+CONFIG_DIR="$HOME/.gemini/config"
+mkdir -p "$CONFIG_DIR"
+MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
+
+python3 -c "
+import json, os
+path = '$MCP_CONFIG'
+data = {{'mcpServers': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
+    data['mcpServers'] = {{}}
+data['mcpServers']['helios'] = {{'url': '{mcp_url}'}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+"
+echo "  [OK] MCP server registered in $MCP_CONFIG"
+
+# Global Directive
+GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
+python3 -c "
+import re, os
+path = '$GEMINI_PATH'
+directive = '''{directive}'''
+if os.path.exists(path):
+    real_path = os.path.realpath(path)
+    with open(real_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    if re.search(r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', content, flags=re.DOTALL):
+        new_content = re.sub(r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', directive, content, flags=re.DOTALL)
+    else:
+        new_content = directive + '\\n\\n' + content
+    with open(real_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+else:
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(directive)
+"
+echo "  [OK] Global directive embedded in $GEMINI_PATH"
+
+# /remember Skill
+SKILL_DIR="$HOME/.gemini/skills/remember"
+mkdir -p "$SKILL_DIR"
+cat <<'EOF' > "$SKILL_DIR/SKILL.md"
+{skill}
+EOF
+echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
+
+echo ""
+echo "Helios setup complete! Restart Antigravity IDE / CLI and call manage_git_webhooks(action='list') to verify."
+"""

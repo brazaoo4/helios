@@ -315,8 +315,22 @@ Settings can be changed dynamically without restarting the Helios container:
 
 ## 1-Prompt AI Client Setup & Lifecycle
 
-### 1. Instant Agent Connection
-Once Helios is running, paste this single prompt into any IDE or CLI agent on any machine:
+### 1. Instant Automated Onboarding (1 Second)
+Run the automated installation script directly on your laptop or workstation:
+
+- **Windows (PowerShell)**:
+  ```powershell
+  irm https://<your-helios-domain>/setup.ps1 | iex
+  ```
+- **Linux / macOS (Bash)**:
+  ```bash
+  curl -fsSL https://<your-helios-domain>/setup.sh | bash
+  ```
+
+This automatically merges the `"helios"` Streamable HTTP configuration into `mcp_config.json`, embeds the idempotent directive into `GEMINI.md` (resolving symlinks and handling CRLF line endings cleanly), and installs the `/remember` skill in `< 2` seconds without agent tool failures.
+
+### 2. Conversational Agent Setup
+Alternatively, paste this single prompt into any IDE or CLI agent on any machine:
 
 ```text
 Fetch https://<your-helios-domain>/setup and configure my local MCP client, global directives, and /remember skill.
@@ -324,7 +338,7 @@ Fetch https://<your-helios-domain>/setup and configure my local MCP client, glob
 
 The agent fetches `GET /setup`, identifies its client environment and OS platform, safely merges the `"helios"` configuration into its MCP configuration file without overwriting other servers, installs the global directive, and installs the `/remember` skill.
 
-### 2. Client Lifecycle & Idempotent Delimiters
+### 3. Client Lifecycle & Idempotent Delimiters
 Helios encloses all injected directives inside idempotent delimiters:
 ```markdown
 <!-- HELIOS:START -->
@@ -347,6 +361,8 @@ Helios encloses all injected directives inside idempotent delimiters:
 | :--- | :--- | :--- |
 | `GET /health` | No (Redacted) / Yes (Full) | Health check returning status. Redacts database telemetry when `HELIOS_API_KEY` is active unless authenticated. |
 | `GET /setup` | No | Self-contained AI onboarding guide with non-destructive MCP config snippets. Accepts optional `?token=<key>`. |
+| `GET /setup.ps1` | No | 1-liner automated Windows PowerShell client onboarding script (`irm <url>/setup.ps1 \| iex`). |
+| `GET /setup.sh` | No | 1-liner automated Linux/macOS Bash client onboarding script (`curl -fsSL <url>/setup.sh \| bash`). |
 | `GET /export/markdown` | Yes (if key configured) | Lists active Markdown scope exports and file sizes. |
 | `GET /export/bundle` | Yes (if key configured) | Generates and streams `helios_portable_bundle.tar.gz`. |
 | `POST /webhook/git`<br>`POST /webhook/forgejo`<br>`POST /hooks/git-commit` | HMAC Signature | Universal Git push webhook receiver for `anchor_files` drift detection. |
