@@ -37,7 +37,10 @@ It provides sub-millisecond full-text retrieval via **SQLite FTS5 (BM25)**, dete
 | `revalidate_memories(memory_ids)` | Batch revalidate stale memories back to `active` status after inspecting modified `anchor_files`. |
 | `deprecate_memory(memory_id, reason)` | Archive an obsolete memory and log it to the scope changelog. |
 | `recall_history(scope, limit)` | Inspect superseded and archived memories for time-travel debugging and audit history. |
-| `manage_scope_alias(alias, canonical_scope, action)` | Manage dynamic project/folder aliases (`set`, `remove`, `list`) or migrate/rename scopes (`rename`). |
+| `manage_scope_alias(alias, canonical_scope, action)` | Manage dynamic project/folder aliases (`set`, `remove`, `list` with active/stale memory counts) or migrate/rename scopes (`rename`). |
+| `manage_server_config(action, key, value)` | Inspect or update server configuration live at runtime (`list`, `set`, `reset`) with automatic token masking and security guardrails. |
+| `manage_git_webhooks(action, repos, include_forks)` | Interactively manage Git push drift detection webhooks across Forgejo, Gitea, GitHub, or GitLab (`list`, `enable`, `disable`). |
+| `get_client_setup_bundle(client, os_platform, instance_role, action)` | Retrieve client MCP JSON config, global directives (`GEMINI.md`), and `/remember` skill (`install_or_update`, `switch_role`, `uninstall`). |
 | `export_bundle()` | Create a fresh online SQLite backup and package `helios_portable_bundle.tar.gz`. |
 
 ---
@@ -46,29 +49,21 @@ It provides sub-millisecond full-text retrieval via **SQLite FTS5 (BM25)**, dete
 
 Helios tracks configuration drift automatically when commits touch memory `anchor_files`. To connect your Git repositories to Helios:
 
-### 1. Backfilling Existing Repositories (`scripts/sync_webhooks.py`)
+### 1. Conversational Agent Management (`manage_git_webhooks`)
 
-A standalone, provider-agnostic CLI script is included to inspect all existing repositories and idempotently register push webhooks (`POST /webhook/git` with JSON payload and HMAC secret):
+Helios includes an interactive FastMCP tool so users and agents can audit and enable drift webhooks directly through chat:
 
+- **List Repositories**: Ask your agent: *"List my Git repositories and check which ones have Helios drift tracking enabled."*
+- **Enable Webhooks**: Ask your agent: *"Enable drift tracking on braz/helios and braz/homelab."*
+- **Disable Webhooks**: Ask your agent: *"Disable drift tracking on braz/deprecated-service."*
+
+To enable automated conversational management, configure your Git provider settings in `.env`:
 ```bash
-# Forgejo / Gitea
-python scripts/sync_webhooks.py \
-  --provider forgejo \
-  --api-url https://git.example.com \
-  --token "$GIT_API_TOKEN" \
-  --webhook-url https://helios.example.com/webhook/git \
-  --webhook-secret "$HELIOS_WEBHOOK_SECRET"
-
-# GitHub
-python scripts/sync_webhooks.py \
-  --provider github \
-  --token "$GITHUB_TOKEN" \
-  --owner my-org \
-  --webhook-url https://helios.example.com/webhook/git \
-  --webhook-secret "$HELIOS_WEBHOOK_SECRET"
+HELIOS_GIT_PROVIDER=forgejo  # forgejo, gitea, github, gitlab
+HELIOS_GIT_API_URL=https://git.example.com
+HELIOS_GIT_TOKEN=your_personal_access_token
+HELIOS_WEBHOOK_URL=https://helios.example.com/webhook/git
 ```
-
-Environment variables `GIT_API_URL`, `GIT_API_TOKEN`, `GIT_OWNER`, `HELIOS_WEBHOOK_URL`, and `HELIOS_WEBHOOK_SECRET` are read automatically if flags are omitted.
 
 ### 2. Zero-Script Setup for New Repositories (Default & Org Webhooks)
 
@@ -94,11 +89,29 @@ To automatically provision Helios drift webhooks on all future repositories with
 
 ---
 
+## Live Day-2 Configuration Management
+
+Helios supports real-time Day-2 configuration updates directly through AI chat without container restarts:
+
+### 1. Dynamic Server Configuration (`manage_server_config`)
+- **Inspect Configuration**: Run `manage_server_config(action="list")` to view all configurable settings, active values, and their provenance (`db`, `env`, or `default`).
+- **Live Overrides**: Modify settings on the fly with `manage_server_config(action="set", key="HELIOS_WORD_LIMIT", value="40")`. Changes persist in SQLite `runtime_settings` and take effect immediately without service restarts.
+- **Reset Overrides**: Revert any runtime setting back to environment/default with `manage_server_config(action="reset", key="HELIOS_WORD_LIMIT")`.
+- **Security Invariant**: Sensitive operational keys (`HELIOS_API_KEY`, `HELIOS_WEBHOOK_SECRET`, `MEMORY_DATA_DIR`, `HELIOS_ALLOWED_ORIGINS`) are strictly locked to environment variables and cannot be modified via DB or MCP tools. Secret tokens like `HELIOS_GIT_TOKEN` are automatically masked (`•••••••• (configured)`) in tool responses.
+
+### 2. Client Lifecycle & Idempotent Directive Updates
+- **Idempotent Delimiters**: Helios wraps all injected agent instructions between `<!-- HELIOS:START -->` and `<!-- HELIOS:END -->`. Agents can reconfigure or upgrade their directives without clobbering other custom instructions.
+- **Role Switching**: Seamlessly change between `workstation` (desktop/IDE development) and `server-cli` (headless host management with token diet guardrails) using `get_client_setup_bundle(action="switch_role", instance_role="server-cli")`.
+- **Clean Uninstallation**: To cleanly decouple an agent, run `get_client_setup_bundle(action="uninstall")` for exact removal steps of the MCP configuration block, directive markers, and the `/remember` skill.
+
+---
+
 ## HTTP Endpoints
 
 | Method & Path | Description |
 | :--- | :--- |
 | `GET /health` | Health check returning minimal status when unauthenticated, or full WAL/telemetry details when authenticated. |
+| `GET /setup` | Returns self-contained AI-driven client setup prompt and non-destructive MCP config snippets. |
 | `GET /export/markdown` | Lists generated Markdown scope export files and sizes. |
 | `GET /export/bundle` | Generates and downloads `helios_portable_bundle.tar.gz`. |
 | `POST /webhook/git`<br>`POST /webhook/forgejo`<br>`POST /hooks/git-commit` | Universal Git `push` webhook receiver (GitHub `X-Hub-Signature-256`, Forgejo/Gitea `X-Forgejo-Signature`, GitLab `X-Gitlab-Token`) for `anchor_files` drift detection. |
@@ -117,7 +130,20 @@ cp seed.example.yaml data/seed.yaml
 docker compose up -d --build
 ```
 
-### 2. Local Development & Tests
+### 2. 1-Prompt AI Client Setup
+
+Once Helios is deployed, connect any local or remote AI agent (Antigravity, Cursor, Claude Desktop, Claude Code) in seconds:
+
+> **Paste this into your IDE or CLI agent on any machine:**
+> ```text
+> Fetch https://<your-helios-domain>/setup and configure my local MCP client, global directives, and /remember skill.
+> ```
+
+The agent will automatically detect the operating system, safely merge the `"helios"` configuration into its MCP configuration file without overwriting other servers, install the global directive (`GEMINI.md` / `CLAUDE.md`), and install the `/remember` skill.
+
+Already connected agents can also run the FastMCP tool `get_client_setup_bundle()` at any time.
+
+### 3. Local Development & Tests
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate

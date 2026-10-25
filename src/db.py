@@ -4,7 +4,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 from src.config import (
     get_episodic_ttl_days,
@@ -119,8 +119,105 @@ def init_db() -> None:
                 alias TEXT PRIMARY KEY,
                 canonical_scope TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS runtime_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
+
+
+def get_runtime_setting(key: str) -> str | None:
+    """Fetch a runtime setting from the database, returning None if not found or table uninitialized."""
+    if not key or not key.strip():
+        return None
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key = ?",
+                (key.strip(),),
+            ).fetchone()
+            return row["value"] if row else None
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        return None
+
+
+def set_runtime_setting(key: str, value: str) -> None:
+    """Set or update a runtime setting in SQLite."""
+    k = key.strip()
+    if not k:
+        raise ValueError("Setting key cannot be empty.")
+    ts = now_iso()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            INSERT INTO runtime_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (k, str(value), ts),
+        )
+
+
+def delete_runtime_setting(key: str) -> bool:
+    """Delete a runtime setting from SQLite. Returns True if deleted, False if not found."""
+    k = key.strip()
+    if not k:
+        return False
+    try:
+        with get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute("DELETE FROM runtime_settings WHERE key = ?", (k,))
+            return cur.rowcount > 0
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        return False
+
+
+def list_runtime_settings() -> dict[str, str]:
+    """Return all runtime settings currently stored in SQLite."""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute("SELECT key, value FROM runtime_settings ORDER BY key").fetchall()
+            return {r["key"]: r["value"] for r in rows}
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        return {}
+
+
+def get_scope_statistics() -> list[dict[str, Any]]:
+    """
+    Return statistics for all memory scopes:
+    [{"scope": ..., "active_count": int, "stale_count": int, "aliases": [...]}, ...]
+    """
+    with get_connection() as conn:
+        aliases = list_aliases()
+        aliases_by_canonical: dict[str, list[str]] = {}
+        for alias, canonical in aliases.items():
+            aliases_by_canonical.setdefault(canonical, []).append(alias)
+
+        rows = conn.execute(
+            """
+            SELECT scope,
+                   SUM(CASE WHEN status = 'active' AND valid_to IS NULL THEN 1 ELSE 0 END) as active_count,
+                   SUM(CASE WHEN status = 'stale' AND valid_to IS NULL THEN 1 ELSE 0 END) as stale_count
+            FROM memories
+            GROUP BY scope
+            ORDER BY active_count DESC, stale_count DESC, scope ASC
+            """
+        ).fetchall()
+
+        stats = []
+        for r in rows:
+            sc = r["scope"]
+            stats.append({
+                "scope": sc,
+                "active_count": r["active_count"] or 0,
+                "stale_count": r["stale_count"] or 0,
+                "aliases": sorted(aliases_by_canonical.get(sc, [])),
+            })
+        return stats
 
 
 def _normalize_alias_key(raw_alias: str) -> str:

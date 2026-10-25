@@ -12,7 +12,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 
 try:
@@ -23,22 +23,34 @@ except ImportError:
     TransportSecuritySettings = None
 
 from src.config import (
+    LOCKED_SECURITY_KEYS,
+    MUTABLE_SETTINGS,
     get_allowed_origins,
     get_api_key,
+    get_git_token,
+    get_memory_data_dir,
     get_webhook_secret,
+    get_webhook_url,
+    resolve_setting_with_source,
+    validate_setting_value,
 )
 from src.db import (
+    delete_runtime_setting,
     deprecate_memory as db_deprecate_memory,
     flag_stale_by_files,
     get_connection,
+    get_runtime_setting,
+    get_scope_statistics,
     init_db,
     list_aliases,
+    list_runtime_settings,
     migrate_scope,
     query_memories,
     remove_alias,
     resolve_scope,
     revalidate_memories as db_revalidate_memories,
     set_alias,
+    set_runtime_setting,
     upsert_memory,
 )
 from src.exporter import (
@@ -46,7 +58,17 @@ from src.exporter import (
     get_export_dir,
     sync_markdown_exports,
 )
+from src.onboarding import (
+    generate_client_bundle,
+    generate_setup_markdown,
+    resolve_server_base_url,
+)
 from src.seed import ingest_declarative_seed_files, is_db_empty, seed_if_empty
+from src.webhooks import (
+    disable_repo_webhooks,
+    enable_repo_webhooks,
+    list_repo_webhooks,
+)
 
 # 1. Initialize FastMCP Server Instance
 HELIOS_INSTRUCTIONS = (
@@ -117,9 +139,11 @@ streamable_handler = StreamableMCPHandler()
 
 COLD_START_ONBOARDING_NOTICE = (
     "[COLD START ONBOARDING] The Helios memory database currently contains zero active memories. "
-    "Please prompt the user for project context or inspect baseline project configuration files "
+    "1. Prompt the user for project context or inspect baseline project configuration files "
     "(e.g., README.md, package.json, compose.yaml, pyproject.toml) to seed initial architectural rules and facts "
-    "using save_memory()."
+    "using save_memory(). "
+    "2. If this client environment has not installed the /remember skill or global memory directives yet, "
+    "call get_client_setup_bundle() to retrieve and configure them."
 )
 
 
@@ -327,9 +351,23 @@ def manage_scope_alias(
             return f"Alias '{alias.strip().lower()}' not found."
         elif act == "list":
             mappings = list_aliases()
+            scope_stats = get_scope_statistics()
+            lines = ["### Configured Scope Aliases"]
             if not mappings:
-                return "No scope aliases configured."
-            lines = [f"- `{k}` -> `{v}`" for k, v in mappings.items()]
+                lines.append("No scope aliases configured.")
+            else:
+                for k, v in mappings.items():
+                    lines.append(f"- `{k}` -> `{v}`")
+
+            lines.append("")
+            lines.append("### Active Scopes in Memory")
+            if not scope_stats:
+                lines.append("No scopes found in memory.")
+            else:
+                for s in scope_stats:
+                    alias_note = f" <- aliases: {', '.join(f'`{a}`' for a in s['aliases'])}" if s["aliases"] else ""
+                    lines.append(f"- `{s['scope']}` ({s['active_count']} active, {s['stale_count']} stale){alias_note}")
+
             return "\n".join(lines)
         elif act == "rename":
             res = migrate_scope(from_scope=alias, to_scope=canonical_scope, register_alias=True)
@@ -342,6 +380,232 @@ def manage_scope_alias(
             return f"Invalid action '{action}'. Must be 'set', 'remove', 'list', or 'rename'."
     except Exception as exc:
         return f"Error managing scope alias: {exc}"
+
+
+@mcp.tool()
+def manage_git_webhooks(
+    action: Annotated[
+        Literal["list", "enable", "disable"],
+        Field(description="Action to perform: 'list' (display repos and drift hook status), 'enable' (attach drift webhook), or 'disable' (remove drift webhook).")
+    ] = "list",
+    repos: Annotated[
+        list[str] | None,
+        Field(default=None, description="List of repository names (e.g. ['braz/helios', 'braz/homelab']) to enable or disable.")
+    ] = None,
+    include_forks: Annotated[
+        bool,
+        Field(default=False, description="Whether to include forked repositories when listing.")
+    ] = False,
+) -> str:
+    """
+    Manage Git repository push drift detection webhooks across Forgejo, Gitea, GitHub, or GitLab.
+    """
+    token = get_git_token()
+    webhook_url = get_webhook_url()
+
+    if not token or not webhook_url:
+        missing = []
+        if not token:
+            missing.append("HELIOS_GIT_TOKEN")
+        if not webhook_url:
+            missing.append("HELIOS_WEBHOOK_URL")
+
+        sample_url = webhook_url or f"{resolve_server_base_url()}/webhook/git"
+        return (
+            f"Git webhook management is not configured on this server (missing: {', '.join(missing)}).\n\n"
+            "### Manual Configuration (Git Web UI):\n"
+            f"1. Open repository settings -> Webhooks -> Add Webhook.\n"
+            f"2. Payload URL: `{sample_url}`\n"
+            "3. Content type: `application/json`\n"
+            f"4. Secret: Set your `HELIOS_WEBHOOK_SECRET`.\n"
+            "5. Trigger: Push events.\n\n"
+            "### Conversational Automation Configuration:\n"
+            "Configure the following in your Helios `.env` and restart Helios:\n"
+            "```bash\n"
+            "HELIOS_GIT_PROVIDER=forgejo  # or gitea, github, gitlab\n"
+            "HELIOS_GIT_API_URL=https://git.example.com\n"
+            "HELIOS_GIT_TOKEN=your_personal_access_token\n"
+            f"HELIOS_WEBHOOK_URL={sample_url}\n"
+            "```"
+        )
+
+    try:
+        act = (action or "list").strip().lower()
+        if act == "list":
+            candidates = list_repo_webhooks(include_forks=include_forks)
+            if not candidates:
+                return "No eligible repositories found owned by the authenticated Git user."
+
+            lines = ["### Git Repository Drift Webhook Status\n"]
+            for c in candidates:
+                mark = "[x]" if c["enabled"] else "[ ]"
+                status_str = "drift webhook active" if c["enabled"] else "drift webhook not configured"
+                scope_str = f", matched Helios scope: `{c['matched_scope']}`" if c.get("matched_scope") else ""
+                fork_str = " (fork)" if c.get("is_fork") else ""
+                lines.append(f"- {mark} `{c['repo']}`{fork_str} ({status_str}{scope_str})")
+
+            lines.append(
+                "\n> **Agent Instruction**: Show this checklist to the user and ask which repositories "
+                "they want to enable before calling `manage_git_webhooks(action='enable', repos=[...])`."
+            )
+            return "\n".join(lines)
+
+        elif act == "enable":
+            if not repos:
+                return "Error: Please specify one or more repository names to enable webhooks on (e.g., repos=['owner/repo'])."
+            res = enable_repo_webhooks(repos=repos)
+            parts = []
+            if res["enabled"]:
+                parts.append(f"Successfully enabled drift webhooks on: {', '.join(f'`{r}`' for r in res['enabled'])}.")
+            if res["already_enabled"]:
+                parts.append(f"Already enabled: {', '.join(f'`{r}`' for r in res['already_enabled'])}.")
+            if res["failed"]:
+                err_strs = [f"`{f['repo']}`: {f['error']}" for f in res["failed"]]
+                parts.append(f"Failed to enable on: {'; '.join(err_strs)}.")
+            return "\n".join(parts) if parts else "No changes made."
+
+        elif act == "disable":
+            if not repos:
+                return "Error: Please specify one or more repository names to disable webhooks on (e.g., repos=['owner/repo'])."
+            res = disable_repo_webhooks(repos=repos)
+            parts = []
+            if res["disabled"]:
+                parts.append(f"Successfully disabled drift webhooks on: {', '.join(f'`{r}`' for r in res['disabled'])}.")
+            if res["not_found"]:
+                parts.append(f"No active Helios webhook found on: {', '.join(f'`{r}`' for r in res['not_found'])}.")
+            if res["failed"]:
+                err_strs = [f"`{f['repo']}`: {f['error']}" for f in res["failed"]]
+                parts.append(f"Failed to disable on: {'; '.join(err_strs)}.")
+            return "\n".join(parts) if parts else "No changes made."
+
+        else:
+            return f"Invalid action '{action}'. Must be 'list', 'enable', or 'disable'."
+    except Exception as exc:
+        return f"Error managing git webhooks: {exc}"
+
+
+@mcp.tool()
+def manage_server_config(
+    action: Annotated[
+        Literal["list", "set", "reset"],
+        Field(description="Action: 'list' (show all configurable settings, active values, and source: db/env/default), 'set' (override a setting live in SQLite without restarting), or 'reset' (delete SQLite override and revert to env/default).")
+    ] = "list",
+    key: Annotated[
+        str,
+        Field(default="", description="Setting name to modify or reset (e.g., 'HELIOS_WORD_LIMIT', 'HELIOS_EPISODIC_TTL_DAYS', 'HELIOS_GIT_PROVIDER', 'HELIOS_GIT_API_URL', 'HELIOS_GIT_TOKEN', 'HELIOS_WEBHOOK_URL', 'HELIOS_PUBLIC_URL').")
+    ] = "",
+    value: Annotated[
+        str,
+        Field(default="", description="New value to apply when action='set'.")
+    ] = "",
+) -> str:
+    """
+    Manage live Day-2 Helios server configuration settings in SQLite without restarting the container.
+    """
+    act = (action or "list").strip().lower()
+
+    if act == "list":
+        lines = [
+            "### Live Server Configuration (Day-2 Management)",
+            "",
+            "| Setting | Active Value | Source | Description |",
+            "| :--- | :--- | :--- | :--- |",
+        ]
+        for k in sorted(MUTABLE_SETTINGS.keys()):
+            val, src = resolve_setting_with_source(k)
+            meta = MUTABLE_SETTINGS[k]
+            if meta.get("sensitive"):
+                display_val = "•••••••• (configured)" if val else "(unset)"
+            else:
+                display_val = f"`{val}`" if (val != "" and val is not None) else "(unset)"
+            lines.append(f"| `{k}` | {display_val} | `{src}` | {meta['description']} |")
+
+        api_key_status = "enabled (configured via env)" if get_api_key() else "disabled (open mode)"
+        hook_secret_status = "enabled (configured via env)" if get_webhook_secret() else "disabled"
+        origins_str = ", ".join(get_allowed_origins())
+
+        lines.extend([
+            "",
+            "### Security Environment Status (Read-Only via env)",
+            f"- `HELIOS_API_KEY`: {api_key_status}",
+            f"- `HELIOS_WEBHOOK_SECRET`: {hook_secret_status}",
+            f"- `HELIOS_ALLOWED_ORIGINS`: `{origins_str}`",
+            f"- `MEMORY_DATA_DIR`: `{get_memory_data_dir()}`",
+        ])
+        return "\n".join(lines)
+
+    elif act == "set":
+        if not key.strip():
+            return "Error: 'key' is required when action='set'."
+        k = key.strip().upper()
+        if k in LOCKED_SECURITY_KEYS:
+            return (
+                f"Security violation: '{k}' is a locked security setting and cannot be modified at runtime. "
+                "It must be configured strictly via server environment variables."
+            )
+        if k not in MUTABLE_SETTINGS:
+            return f"Error: Unknown setting '{k}'. Configurable settings are: {', '.join(sorted(MUTABLE_SETTINGS.keys()))}."
+
+        try:
+            valid_val = validate_setting_value(k, value)
+        except ValueError as exc:
+            return f"Validation error for '{k}': {exc}"
+
+        set_runtime_setting(k, str(valid_val) if valid_val is not None else "")
+        display_val = "•••••••• (configured)" if MUTABLE_SETTINGS[k].get("sensitive") and valid_val else valid_val
+        return f"Setting '{k}' updated live in SQLite to '{display_val}'. Effective immediately without restarting."
+
+    elif act == "reset":
+        if not key.strip():
+            return "Error: 'key' is required when action='reset'."
+        k = key.strip().upper()
+        if k in LOCKED_SECURITY_KEYS:
+            return f"Security violation: '{k}' is a locked security setting and cannot be modified at runtime."
+        if k not in MUTABLE_SETTINGS:
+            return f"Error: Unknown setting '{k}'. Configurable settings are: {', '.join(sorted(MUTABLE_SETTINGS.keys()))}."
+
+        deleted = delete_runtime_setting(k)
+        val, src = resolve_setting_with_source(k)
+        meta = MUTABLE_SETTINGS[k]
+        display_val = "•••••••• (configured)" if meta.get("sensitive") and val else (val if val is not None else "(unset)")
+        if deleted:
+            return f"Setting '{k}' reset in SQLite override. Active value reverted to {src} ('{display_val}')."
+        return f"Setting '{k}' had no SQLite override. Current value is '{display_val}' from {src}."
+
+    else:
+        return f"Invalid action '{action}'. Must be 'list', 'set', or 'reset'."
+
+
+@mcp.tool()
+def get_client_setup_bundle(
+    client: Annotated[
+        Literal["antigravity", "cursor", "claude-desktop", "claude-code", "all"],
+        Field(description="Target client environment to configure.")
+    ] = "all",
+    os_platform: Annotated[
+        Literal["windows", "linux", "macos", "auto"],
+        Field(description="Target operating system for config file paths.")
+    ] = "auto",
+    instance_role: Annotated[
+        Literal["workstation", "server-cli"],
+        Field(description="Role of this machine ('workstation' for IDE/laptop or 'server-cli' for headless host with strict log-truncation rules).")
+    ] = "workstation",
+    action: Annotated[
+        Literal["install_or_update", "switch_role", "uninstall"],
+        Field(description="Lifecycle action: 'install_or_update' (idempotently set or refresh client config and directive blocks), 'switch_role' (change machine role between 'workstation' and 'server-cli'), or 'uninstall' (instructions to cleanly remove Helios from MCP config, strip the HELIOS marker block, and remove the /remember skill).")
+    ] = "install_or_update",
+) -> str:
+    """
+    Retrieve client configuration snippets, global directives (GEMINI.md), and the /remember skill definition.
+    """
+    base_url = resolve_server_base_url()
+    return generate_client_bundle(
+        client=client,
+        os_platform=os_platform,
+        instance_role=instance_role,
+        base_url=base_url,
+        action=action,
+    )
 
 
 # 3. Zero-Trust Authentication Helpers & Middleware
@@ -374,14 +638,14 @@ class AuthGateMiddleware(BaseHTTPMiddleware):
     Zero-Trust Security Middleware:
     - If HELIOS_API_KEY is unset, passes all requests (open local/mesh mode).
     - If set, enforces constant-time authentication via Authorization: Bearer <key> or ?token=<key>.
-    - Exempts POST /webhook/* (and /hooks/git-commit) and GET /health.
+    - Exempts POST /webhook/* (and /hooks/git-commit), GET /health, and GET /setup.
     """
     async def dispatch(self, request: Request, call_next):
         if request.method == "OPTIONS":
             return await call_next(request)
 
         path = request.url.path
-        if request.method == "GET" and path == "/health":
+        if request.method == "GET" and (path == "/health" or path == "/setup"):
             return await call_next(request)
 
         if request.method == "POST" and (path.startswith("/webhook/") or path == "/hooks/git-commit"):
@@ -733,9 +997,23 @@ async def git_webhook(request: Request) -> JSONResponse:
 forgejo_webhook = git_webhook
 
 
+async def setup_instructions(request: Request) -> Response:
+    """
+    HTTP GET /setup endpoint returning self-contained setup instructions
+    for AI agents (curl -fsSL https://<host>/setup).
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    has_auth = get_api_key() is not None
+    query_token = request.query_params.get("token")
+    content = generate_setup_markdown(base_url=base_url, has_auth=has_auth, query_token=query_token)
+    return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+
+
 # 6. Assemble Starlette ASGI Application
 starlette_routes = [
     Route("/health", health_check, methods=["GET"]),
+    Route("/setup", setup_instructions, methods=["GET"]),
     Route("/export/bundle", export_bundle_download, methods=["GET"]),
     Route("/export/markdown", list_markdown_exports, methods=["GET"]),
     Route("/webhook/git", git_webhook, methods=["POST"]),

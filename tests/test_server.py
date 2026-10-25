@@ -14,6 +14,7 @@ from src.server import (
     deprecate_memory,
     export_bundle,
     manage_scope_alias,
+    manage_server_config,
     mcp,
     recall_history,
     recall_memories,
@@ -590,8 +591,33 @@ def test_fastmcp_tool_schema_descriptions():
         "revalidate_memories",
         "manage_scope_alias",
         "export_bundle",
+        "manage_git_webhooks",
+        "get_client_setup_bundle",
+        "manage_server_config",
     }
     assert expected_tools.issubset(set(tool_map.keys()))
+
+    # Inspect manage_server_config schema
+    cfg_tool = tool_map["manage_server_config"]
+    cfg_props = cfg_tool.inputSchema.get("properties", {})
+    assert "action" in cfg_props
+    assert "key" in cfg_props
+    assert "value" in cfg_props
+
+    # Inspect manage_git_webhooks schema
+    gw_tool = tool_map["manage_git_webhooks"]
+    gw_props = gw_tool.inputSchema.get("properties", {})
+    assert "action" in gw_props
+    assert "repos" in gw_props
+    assert "include_forks" in gw_props
+
+    # Inspect get_client_setup_bundle schema
+    setup_tool = tool_map["get_client_setup_bundle"]
+    setup_props = setup_tool.inputSchema.get("properties", {})
+    assert "client" in setup_props
+    assert "os_platform" in setup_props
+    assert "instance_role" in setup_props
+    assert "action" in setup_props
 
     # Inspect save_memory's schema
     save_tool = tool_map["save_memory"]
@@ -631,3 +657,113 @@ def test_fastmcp_tool_schema_descriptions():
     reval_props = reval_tool.inputSchema.get("properties", {})
     assert "memory_ids" in reval_props
     assert "stale memory IDs" in reval_props["memory_ids"].get("description", "")
+
+
+# --- 8. Day-2 Live Configuration Management & Scope Statistics ---
+
+def test_manage_server_config_list(monkeypatch):
+    monkeypatch.setenv("HELIOS_API_KEY", "prod-secret-key")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "ghp_secrettoken123456789")
+
+    res = manage_server_config(action="list")
+    assert "### Live Server Configuration (Day-2 Management)" in res
+    assert "| `HELIOS_WORD_LIMIT` | `25` | `default` |" in res
+    assert "| `HELIOS_GIT_TOKEN` | •••••••• (configured) | `env` |" in res
+    # Security: raw git token must never be exposed
+    assert "ghp_secrettoken123456789" not in res
+
+    # Security env status indicators
+    assert "### Security Environment Status (Read-Only via env)" in res
+    assert "`HELIOS_API_KEY`: enabled (configured via env)" in res
+    assert "prod-secret-key" not in res
+    assert "`HELIOS_WEBHOOK_SECRET`: disabled" in res
+
+
+def test_manage_server_config_set_and_reset():
+    # 1. 35-word memory initially fails because default limit is 25 words
+    long_content = " ".join([f"word{i}" for i in range(35)])
+    res_err1 = save_memory(scope="testscope", category="fact", content=long_content)
+    assert "Error saving memory" in res_err1
+    assert "exceeds 25-word limit" in res_err1
+
+    # 2. Increase word limit to 40 live in SQLite
+    set_res = manage_server_config(action="set", key="HELIOS_WORD_LIMIT", value="40")
+    assert "updated live in SQLite to '40'" in set_res
+
+    # 3. Now the 35-word memory saves successfully
+    save_res = save_memory(scope="testscope", category="fact", content=long_content, subject="longmem")
+    assert "Memory #" in save_res
+
+    # 4. Reset word limit back to default
+    reset_res = manage_server_config(action="reset", key="HELIOS_WORD_LIMIT")
+    assert "reset in SQLite override" in reset_res
+    assert "default ('25')" in reset_res
+
+    # 5. Saving another 35-word memory is rejected again
+    long_content_2 = " ".join([f"token{i}" for i in range(35)])
+    res_err2 = save_memory(scope="testscope", category="fact", content=long_content_2)
+    assert "Error saving memory" in res_err2
+    assert "exceeds 25-word limit" in res_err2
+
+    # 6. Validation bounds error
+    err_low = manage_server_config(action="set", key="HELIOS_WORD_LIMIT", value="4")
+    assert "Validation error" in err_low
+    assert "between 5 and 200" in err_low
+
+    err_high = manage_server_config(action="set", key="HELIOS_WORD_LIMIT", value="250")
+    assert "Validation error" in err_high
+    assert "between 5 and 200" in err_high
+
+    # 7. Git provider validation
+    err_prov = manage_server_config(action="set", key="HELIOS_GIT_PROVIDER", value="svn")
+    assert "Validation error" in err_prov
+    assert "must be one of" in err_prov
+
+    # 8. Setting sensitive token masks it in return message
+    tok_res = manage_server_config(action="set", key="HELIOS_GIT_TOKEN", value="my-secret-pat")
+    assert "updated live in SQLite to '•••••••• (configured)'" in tok_res
+    assert "my-secret-pat" not in tok_res
+
+    # 9. Security guardrails reject locked security settings
+    sec_set = manage_server_config(action="set", key="HELIOS_API_KEY", value="newkey")
+    assert "Security violation" in sec_set
+    assert "locked security setting" in sec_set
+
+    sec_reset = manage_server_config(action="reset", key="HELIOS_WEBHOOK_SECRET")
+    assert "Security violation" in sec_reset
+
+    # 10. Unknown setting
+    unk_res = manage_server_config(action="set", key="NONEXISTENT_SETTING", value="val")
+    assert "Error: Unknown setting" in unk_res
+
+
+def test_manage_scope_alias_list_with_statistics():
+    # Save active and stale memories
+    save_memory(
+        scope="infra",
+        category="fact",
+        content="Primary ingress IP 10.0.0.1",
+        subject="ingress",
+        anchor_files=["traefik.yaml"],
+    )
+    save_memory(scope="infra", category="rule", content="Use TLS 1.3 only", subject="tls")
+
+    # Flag traefik.yaml as stale
+    with TestClient(app) as client:
+        hook_payload = {
+            "repository": {"name": "infra"},
+            "commits": [{"modified": ["traefik.yaml"]}],
+            "after": "c001cafe",
+        }
+        res = client.post("/webhook/git", json=hook_payload)
+        assert res.status_code == 200
+
+    # Set alias
+    manage_scope_alias(alias="homelab", canonical_scope="infra", action="set")
+
+    # List aliases and statistics
+    list_res = manage_scope_alias(action="list")
+    assert "### Configured Scope Aliases" in list_res
+    assert "`homelab` -> `infra`" in list_res
+    assert "### Active Scopes in Memory" in list_res
+    assert "- `infra` (1 active, 1 stale) <- aliases: `homelab`" in list_res

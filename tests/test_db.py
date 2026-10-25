@@ -4,10 +4,14 @@ import pytest
 
 import src.config as config
 from src.db import (
+    delete_runtime_setting,
     flag_stale_by_files,
     get_connection,
+    get_runtime_setting,
+    get_scope_statistics,
     init_db,
     list_aliases,
+    list_runtime_settings,
     migrate_scope,
     prune_expired_episodic,
     query_memories,
@@ -15,6 +19,7 @@ from src.db import (
     resolve_scope,
     revalidate_memories,
     set_alias,
+    set_runtime_setting,
     upsert_memory,
 )
 
@@ -46,6 +51,12 @@ def test_config_defaults_and_dynamic_env(monkeypatch, tmp_path):
     assert config.HELIOS_EPISODIC_TTL_DAYS == 14
     assert config.HELIOS_CHANGELOG_LIMIT == 100
     assert config.HELIOS_ALLOWED_ORIGINS == ["*"]
+    assert config.HELIOS_GIT_PROVIDER == ""
+    assert config.HELIOS_GIT_API_URL == ""
+    assert config.HELIOS_GIT_TOKEN is None
+    assert config.HELIOS_GIT_OWNER == ""
+    assert config.HELIOS_WEBHOOK_URL == ""
+    assert config.HELIOS_PUBLIC_URL == ""
 
     monkeypatch.setenv("HELIOS_API_KEY", "test-key-123")
     monkeypatch.setenv("HELIOS_WEBHOOK_SECRET", "hook-secret-456")
@@ -53,6 +64,12 @@ def test_config_defaults_and_dynamic_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HELIOS_EPISODIC_TTL_DAYS", "7")
     monkeypatch.setenv("HELIOS_CHANGELOG_LIMIT", "50")
     monkeypatch.setenv("HELIOS_ALLOWED_ORIGINS", "https://app.example.com, http://localhost:3000")
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "forgejo")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://git.example.com")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "git-tok-123")
+    monkeypatch.setenv("HELIOS_GIT_OWNER", "braz")
+    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "https://helios.example.com/webhook/git")
+    monkeypatch.setenv("HELIOS_PUBLIC_URL", "https://helios.example.com")
 
     assert config.HELIOS_API_KEY == "test-key-123"
     assert config.HELIOS_WEBHOOK_SECRET == "hook-secret-456"
@@ -60,6 +77,12 @@ def test_config_defaults_and_dynamic_env(monkeypatch, tmp_path):
     assert config.HELIOS_EPISODIC_TTL_DAYS == 7
     assert config.HELIOS_CHANGELOG_LIMIT == 50
     assert config.HELIOS_ALLOWED_ORIGINS == ["https://app.example.com", "http://localhost:3000"]
+    assert config.HELIOS_GIT_PROVIDER == "forgejo"
+    assert config.HELIOS_GIT_API_URL == "https://git.example.com"
+    assert config.HELIOS_GIT_TOKEN == "git-tok-123"
+    assert config.HELIOS_GIT_OWNER == "braz"
+    assert config.HELIOS_WEBHOOK_URL == "https://helios.example.com/webhook/git"
+    assert config.HELIOS_PUBLIC_URL == "https://helios.example.com"
 
     monkeypatch.setenv("HELIOS_WORD_LIMIT", "not-an-int")
     with pytest.raises(ValueError, match="must be an integer"):
@@ -505,3 +528,115 @@ def test_query_memories_technical_tokens():
     # Query with boolean operators and quotes should not throw sqlite3.OperationalError
     res_bool = query_memories("infra", 'AND NOT "compose.yaml"')
     assert len(res_bool) == 1
+
+
+# --- 2.10: Runtime Settings & Layered Configuration Precedence ---
+
+def test_runtime_settings_crud():
+    # 1. Unset key returns None
+    assert get_runtime_setting("HELIOS_WORD_LIMIT") is None
+
+    # 2. Set key and get it back
+    set_runtime_setting("HELIOS_WORD_LIMIT", "30")
+    assert get_runtime_setting("HELIOS_WORD_LIMIT") == "30"
+
+    # 3. List runtime settings
+    settings = list_runtime_settings()
+    assert settings.get("HELIOS_WORD_LIMIT") == "30"
+
+    # 4. Overwrite key
+    set_runtime_setting("HELIOS_WORD_LIMIT", "45")
+    assert get_runtime_setting("HELIOS_WORD_LIMIT") == "45"
+
+    # 5. Delete key
+    assert delete_runtime_setting("HELIOS_WORD_LIMIT") is True
+    assert get_runtime_setting("HELIOS_WORD_LIMIT") is None
+
+    # 6. Delete nonexistent key returns False
+    assert delete_runtime_setting("NONEXISTENT_KEY") is False
+
+
+def test_layered_config_resolution(monkeypatch):
+    # 1. Default resolution (no env, no db)
+    assert config.get_word_limit() == 25
+    val, source = config.resolve_setting_with_source("HELIOS_WORD_LIMIT")
+    assert val == 25 and source == "default"
+
+    # 2. Environment variable override
+    monkeypatch.setenv("HELIOS_WORD_LIMIT", "30")
+    assert config.get_word_limit() == 30
+    val, source = config.resolve_setting_with_source("HELIOS_WORD_LIMIT")
+    assert val == 30 and source == "env"
+
+    # 3. SQLite runtime_settings table override (takes highest precedence)
+    set_runtime_setting("HELIOS_WORD_LIMIT", "40")
+    assert config.get_word_limit() == 40
+    val, source = config.resolve_setting_with_source("HELIOS_WORD_LIMIT")
+    assert val == 40 and source == "db"
+
+    # 4. Deleting runtime setting reverts to environment variable
+    delete_runtime_setting("HELIOS_WORD_LIMIT")
+    assert config.get_word_limit() == 30
+    val, source = config.resolve_setting_with_source("HELIOS_WORD_LIMIT")
+    assert val == 30 and source == "env"
+
+    # 5. Unsetting environment variable reverts to default
+    monkeypatch.delenv("HELIOS_WORD_LIMIT", raising=False)
+    assert config.get_word_limit() == 25
+    val, source = config.resolve_setting_with_source("HELIOS_WORD_LIMIT")
+    assert val == 25 and source == "default"
+
+
+def test_config_validation_and_locked_keys():
+    # Locked keys raise ValueError when attempted via validate_setting_value
+    for locked in config.LOCKED_SECURITY_KEYS:
+        with pytest.raises(ValueError, match="is locked and can only be set via environment variable"):
+            config.validate_setting_value(locked, "some-secret-val")
+
+    # Unknown key raises KeyError
+    with pytest.raises(KeyError, match="Unknown setting"):
+        config.validate_setting_value("UNKNOWN_VAR", "foo")
+
+    # Integer bounds checks
+    with pytest.raises(ValueError, match="between 5 and 200"):
+        config.validate_setting_value("HELIOS_WORD_LIMIT", "4")
+    with pytest.raises(ValueError, match="between 5 and 200"):
+        config.validate_setting_value("HELIOS_WORD_LIMIT", "201")
+    assert config.validate_setting_value("HELIOS_WORD_LIMIT", "50") == 50
+
+    # Git provider choices
+    with pytest.raises(ValueError, match="must be one of"):
+        config.validate_setting_value("HELIOS_GIT_PROVIDER", "bitbucket")
+    assert config.validate_setting_value("HELIOS_GIT_PROVIDER", "forgejo") == "forgejo"
+    assert config.validate_setting_value("HELIOS_GIT_PROVIDER", "") == ""
+
+
+def test_get_scope_statistics():
+    # Empty database
+    assert get_scope_statistics() == []
+
+    # Insert memories across scopes
+    upsert_memory("frontend", "fact", "Frontend runs on port 3000", subject="port")
+    upsert_memory("frontend", "rule", "Always run prettier before commit", subject="lint", anchor_files=["package.json"])
+    upsert_memory("backend", "fact", "Backend runs on port 8000", subject="port")
+
+    # Flag one frontend memory as stale
+    flag_stale_by_files("frontend", ["package.json"], "commit123")
+
+    # Set alias fe -> frontend
+    set_alias("fe", "frontend")
+
+    stats = get_scope_statistics()
+    # stats sorted by active_count DESC, stale_count DESC, scope ASC
+    assert len(stats) == 2
+    # frontend has 1 active, 1 stale -> comes first
+    assert stats[0]["scope"] == "frontend"
+    assert stats[0]["active_count"] == 1
+    assert stats[0]["stale_count"] == 1
+    assert stats[0]["aliases"] == ["fe"]
+
+    # backend has 1 active, 0 stale -> comes second
+    assert stats[1]["scope"] == "backend"
+    assert stats[1]["active_count"] == 1
+    assert stats[1]["stale_count"] == 0
+    assert stats[1]["aliases"] == []
