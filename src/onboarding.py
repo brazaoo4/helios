@@ -313,6 +313,14 @@ def generate_client_bundle(
         "```markdown",
         generate_remember_skill(word_limit=active_word_limit).strip(),
         "```",
+        "",
+        "---",
+        "## 4. Git Webhook Drift Tracking (`manage_git_webhooks`)",
+        "",
+        "Helios automatically tracks configuration drift when commits touch `anchor_files`.",
+        "- Execute `manage_git_webhooks(action='list')` to audit candidate repositories and webhook statuses.",
+        "- Present the repository checklist to the user and ask which repositories to enable.",
+        "- Execute `manage_git_webhooks(action='enable', repos=[...])` to activate drift tracking.",
     ])
 
     return "\n".join(lines)
@@ -355,7 +363,11 @@ def generate_setup_markdown(
         "3. Configure the Global Agent Directive (`GEMINI.md`, `CLAUDE.md`, or `.cursor/rules/helios.mdc`). "
         "If `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists in the file, replace only that block, "
         "preserving all existing user rules.\n"
-        "4. Install the `/remember` skill into `~/.gemini/skills/remember/SKILL.md`.\n\n"
+        "4. Install the `/remember` skill into `~/.gemini/skills/remember/SKILL.md`.\n"
+        "5. **Interactive Git Drift Webhook Setup (Mandatory Follow-Up)**:\n"
+        "   - After verifying the MCP connection, immediately call `manage_git_webhooks(action='list')` to audit repository webhooks.\n"
+        "   - Present the repository checklist to the user and ask: *'Which of these repositories would you like to enable automated push drift tracking on?'*\n"
+        "   - Call `manage_git_webhooks(action='enable', repos=[...])` for the repositories the user confirms.\n\n"
         "### MCP Client Configuration Files:\n\n"
         "#### Antigravity / Gemini CLI:\n"
         "- **Path (Linux/macOS)**: `~/.gemini/config/mcp_config.json`\n"

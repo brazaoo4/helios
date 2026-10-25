@@ -110,6 +110,7 @@ def test_http_setup_endpoint_open_mode():
         assert "http://helios.local:8000" in content
         assert "mcp_config.json" in content
         assert "name: remember" in content
+        assert "manage_git_webhooks" in content
 
 
 def test_http_setup_endpoint_with_auth_and_no_leak(monkeypatch):
@@ -156,6 +157,7 @@ def test_get_client_setup_bundle_tool():
     assert "Claude-code" in bundle_all
     assert "GEMINI.md" in bundle_all
     assert "name: remember" in bundle_all
+    assert "manage_git_webhooks" in bundle_all
 
     # 2. Server-CLI role
     bundle_server = get_client_setup_bundle(
