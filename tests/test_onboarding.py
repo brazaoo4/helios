@@ -60,7 +60,7 @@ def test_mcp_config_paths_and_snippets():
     # Snippets
     anti_cfg = get_mcp_config_snippet("antigravity", "https://helios.example.com")
     assert isinstance(anti_cfg, dict)
-    assert anti_cfg["mcpServers"]["helios"]["url"] == "https://helios.example.com/sse"
+    assert anti_cfg["mcpServers"]["helios"]["url"] == "https://helios.example.com/mcp"
 
     claude_cfg = get_mcp_config_snippet("claude-desktop", "https://helios.example.com", token="tok123")
     assert isinstance(claude_cfg, dict)

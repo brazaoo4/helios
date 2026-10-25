@@ -86,7 +86,18 @@ def get_mcp_config_snippet(
     if token:
         sse_url = f"{sse_url}?token={token}"
 
-    if c in ("antigravity", "cursor"):
+    if c == "antigravity":
+        mcp_url = f"{clean_base}/mcp"
+        if token:
+            mcp_url = f"{mcp_url}?token={token}"
+        return {
+            "mcpServers": {
+                "helios": {
+                    "url": mcp_url,
+                }
+            }
+        }
+    elif c == "cursor":
         return {
             "mcpServers": {
                 "helios": {
