@@ -216,6 +216,119 @@ def generate_remember_skill(word_limit: int | None = None) -> str:
     )
 
 
+def generate_guard_hook_script() -> str:
+    """Generate the ~/.gemini/config/scripts/helios_guard.py hook script."""
+    return '''#!/usr/bin/env python3
+"""
+Helios Write-Through Guard Hook for Antigravity (PreInvocation).
+
+Inspects the recent conversation trajectory. If the agent performed workspace
+or infrastructure mutations (file writes, edits, docker, git commits) without
+invoking `helios.save_memory` via MCP, injects an ephemeral cognitive reminder
+to enforce the Write-Through Definition of Done before finishing the turn.
+"""
+
+import json
+import os
+import re
+import sys
+
+MUTATING_TOOLS = {"edit_file", "write_file"}
+MUTATING_COMMAND_PATTERNS = [
+    r"\\bdocker\\s+(compose\\s+)?(up|run|restart|build|stop|rm)\\b",
+    r"\\bgit\\s+(commit|push|rebase|merge|tag)\\b",
+    r"\\bgh\\s+(repo|release|pr\\s+create|workflow)\\b",
+    r"\\bsystemctl\\s+(start|stop|restart|enable)\\b",
+]
+
+
+def check_recent_trajectory(transcript_path: str, artifact_dir: str = "") -> bool:
+    """Return True if recent steps contained unpersisted mutations."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return False
+
+    try:
+        file_size = os.path.getsize(transcript_path)
+        read_bytes = min(file_size, 40960)
+        with open(transcript_path, "rb") as f:
+            if file_size > read_bytes:
+                f.seek(file_size - read_bytes)
+            chunk = f.read().decode("utf-8", errors="ignore")
+
+        lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+        if not lines:
+            return False
+
+        has_mutation = False
+        has_memory_capture = False
+
+        for raw_line in reversed(lines[-20:]):
+            try:
+                step = json.loads(raw_line)
+            except Exception:
+                continue
+
+            tool_calls = step.get("tool_calls", [])
+            for tc in tool_calls:
+                name = tc.get("name", "")
+                args = tc.get("args", {})
+
+                if name == "call_mcp_tool" and args.get("ServerName") == "helios":
+                    tool_name = args.get("ToolName", "")
+                    if tool_name in ("save_memory", "deprecate_memory", "revalidate_memories"):
+                        has_memory_capture = True
+                elif "helios_save_memory" in name:
+                    has_memory_capture = True
+
+                if name in MUTATING_TOOLS:
+                    target_path = str(args.get("Path", ""))
+                    if not (artifact_dir and target_path.startswith(artifact_dir)):
+                        has_mutation = True
+
+                if name == "run_command":
+                    cmd = str(args.get("CommandLine", ""))
+                    for pat in MUTATING_COMMAND_PATTERNS:
+                        if re.search(pat, cmd, flags=re.IGNORECASE):
+                            has_mutation = True
+                            break
+
+        return has_mutation and not has_memory_capture
+    except Exception:
+        return False
+
+
+def main():
+    try:
+        raw_input = sys.stdin.read()
+        if not raw_input.strip():
+            print(json.dumps({"injectSteps": []}))
+            return
+
+        payload = json.loads(raw_input)
+        transcript_path = payload.get("transcriptPath", "")
+        artifact_dir = payload.get("artifactDirectoryPath", "")
+
+        needs_nudge = check_recent_trajectory(transcript_path, artifact_dir)
+        if needs_nudge:
+            message = (
+                "⚠️ HELIOS WRITE-THROUGH GUARD: You have executed workspace or infrastructure modifications. "
+                "Remember: tasks are INCOMPLETE until persistent architectural changes, ports, or non-obvious fixes "
+                "are recorded in Helios via helios.save_memory. Do not conclude your turn without persisting state."
+            )
+            output = {"injectSteps": [{"ephemeralMessage": message}]}
+        else:
+            output = {"injectSteps": []}
+
+        print(json.dumps(output))
+    except Exception:
+        print(json.dumps({"injectSteps": []}))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
 def generate_client_bundle(
     client: str = "all",
     os_platform: str = "auto",
@@ -592,6 +705,7 @@ def generate_setup_bash(
     active_limit = get_word_limit()
     directive = generate_global_directive(instance_role, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
+    guard_script = generate_guard_hook_script().strip()
     role_norm = instance_role.strip().lower()
     client_norm = client.strip().lower()
 
@@ -721,6 +835,41 @@ cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
 {skill}
 HELIOS_SKILL_EOF
 echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
+
+# 7. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
+SCRIPTS_DIR="$CONFIG_DIR/scripts"
+mkdir -p "$SCRIPTS_DIR"
+cat <<'HELIOS_GUARD_EOF' > "$SCRIPTS_DIR/helios_guard.py"
+{guard_script}
+HELIOS_GUARD_EOF
+chmod +x "$SCRIPTS_DIR/helios_guard.py"
+
+HOOKS_PATH="$CONFIG_DIR/hooks.json"
+HOOKS_PATH="$HOOKS_PATH" python3 - <<'PYEOF'
+import json, os
+path = os.environ["HOOKS_PATH"]
+data = {{}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if not isinstance(data, dict):
+    data = {{}}
+data['helios-write-through-guard'] = {{
+    'PreInvocation': [
+        {{
+            'type': 'command',
+            'command': 'python3 ' + os.path.expanduser('~/.gemini/config/scripts/helios_guard.py'),
+            'timeout': 5,
+        }}
+    ]
+}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+echo "  [OK] Helios Write-Through guard hook registered in $HOOKS_PATH"
 
 echo ""
 echo "=================================================="
