@@ -39,49 +39,94 @@ AI coding agents suffer from two fundamental failure modes: **amnesia** (forgett
 
 ## 🚀 1. Quick Start: Server Deployment
 
-### Option A: Docker Compose (Recommended)
+Create a `compose.yaml` file (or paste directly into Dockhand / Portainer) and run `docker compose up -d`:
+
+### `compose.yaml`
+
+```yaml
+services:
+  helios:
+    image: ghcr.io/<your-username>/helios:latest
+    # Or to build locally from source:
+    # build: .
+    container_name: helios
+    restart: unless-stopped
+    user: "1000:1000"  # Must match ownership of your host data directory
+    ports:
+      - "8000:8000"    # Omit if routing internally via a reverse proxy network
+    volumes:
+      # [MANDATORY] Persistent storage for SQLite WAL (memory.db) & Markdown exports
+      - ./data:/data
+    environment:
+      # ========================================================================
+      # 1. MANDATORY / CORE SETTINGS
+      # ========================================================================
+      - TZ=UTC
+      - MEMORY_DATA_DIR=/data
+
+      # ========================================================================
+      # 2. RECOMMENDED SECURITY (Required if exposed outside a private LAN/VPN)
+      # ========================================================================
+      # Shared Bearer / ?token= key required for /mcp, /sse, and /export/*.
+      # Leave empty ONLY if running on a trusted local network or Tailscale mesh.
+      - HELIOS_API_KEY=
+      # Shared HMAC-SHA256 secret for verifying POST /webhook/git payloads.
+      # Generate with: openssl rand -hex 32
+      - HELIOS_WEBHOOK_SECRET=
+      - HELIOS_REQUIRE_WEBHOOK_SECRET=false
+
+      # ========================================================================
+      # 3. OPTIONAL: REVERSE PROXY & ENGINE TUNABLES (Also live-editable via MCP)
+      # ========================================================================
+      # Override base URL used in /setup scripts (auto-detected from proxy headers if empty)
+      - HELIOS_PUBLIC_URL=
+      - HELIOS_ALLOWED_ORIGINS=*
+      - HELIOS_WORD_LIMIT=25
+      - HELIOS_EPISODIC_TTL_DAYS=14
+      - HELIOS_CHANGELOG_LIMIT=100
+
+      # ========================================================================
+      # 4. OPTIONAL: CONVERSATIONAL GIT WEBHOOK MANAGER (manage_git_webhooks)
+      # ========================================================================
+      # Only needed if you want your AI agent to list/enable repo webhooks via chat.
+      # Leave empty if you prefer adding webhooks manually in your Git UI.
+      - HELIOS_GIT_PROVIDER=     # forgejo | gitea | github | gitlab
+      - HELIOS_GIT_API_URL=      # e.g., https://git.example.com or https://api.github.com
+      - HELIOS_GIT_TOKEN=        # PAT with repo/webhook permissions
+      - HELIOS_GIT_OWNER=        # Optional username/org filter
+      - HELIOS_WEBHOOK_URL=      # e.g., https://helios.example.com/webhook/git
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+### Pre-Flight Host Notes
+
+* **Volume Permissions (`1000:1000`)**: Helios runs rootless as `uid=1000` (`gid=1000`). Ensure your host bind-mount directory is owned by `1000:1000` before starting:
+  ```bash
+  mkdir -p ./data && chown -R 1000:1000 ./data
+  ```
+* **Reverse Proxy (Nginx Proxy Manager / Caddy / Traefik)**: If exposing Helios over HTTPS, disable proxy buffering on your reverse proxy so SSE streams (`/sse` and `/mcp`) flush immediately:
+  ```nginx
+  proxy_buffering off;
+  proxy_cache off;
+  proxy_read_timeout 86400s;
+  ```
+* **Cold-Boot Seeding (Optional)**: If you drop a `seed.yaml` file (see [seed.example.yaml](seed.example.yaml)) into `./data/seed.yaml`, Helios will automatically ingest it on startup and rename it to `seed.yaml.imported`.
+
+### Building from Source (Alternative)
+
+If you aren't pulling a pre-built image and want to build from the repository:
 
 ```bash
-# Clone the repository
 git clone https://github.com/<your-username>/helios.git
 cd helios
-
-# Configure environment & persistent data directory
 cp .env.example .env
-mkdir -p data
-
-# Optional: Seed initial architecture rules on cold-boot
-cp seed.example.yaml data/seed.yaml
-
-# Start Helios container (exposes port 8000)
+mkdir -p data && chown -R 1000:1000 data
 docker compose up -d --build
 ```
-
-### Option B: Standalone Docker One-Liner
-
-```bash
-docker run -d \
-  --name helios \
-  -p 8000:8000 \
-  -v $(pwd)/data:/data \
-  ghcr.io/<your-username>/helios:latest
-```
-
-### Core Environment Variables
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `MEMORY_DATA_DIR` | `/data` | Path inside container where SQLite (`memory.db`) and Markdown exports live. |
-| `HELIOS_API_KEY` | `""` (Open) | Zero-trust auth token. Enables constant-time `hmac.compare_digest` verification on `/mcp`, `/sse`, and `/export/*`. |
-| `HELIOS_WEBHOOK_SECRET` | `""` | Shared HMAC secret for validating incoming Git push webhooks (`POST /webhook/git`). |
-| `HELIOS_REQUIRE_WEBHOOK_SECRET` | `false` | Enforce fail-closed rejection (`HTTP 503`) if `HELIOS_WEBHOOK_SECRET` is unset. |
-| `HELIOS_PUBLIC_URL` | `""` | Public/mesh base URL override for client `/setup` generation (e.g. `https://helios.example.com`). |
-| `HELIOS_WORD_LIMIT` | `25` | Maximum words allowed per atomic memory statement (5–200, live-tunable via MCP). |
-| `HELIOS_EPISODIC_TTL_DAYS` | `14` | Days of inactivity before temporary episodic memories are auto-archived (1–365). |
-| `HELIOS_GIT_PROVIDER` | `""` | Optional Git provider for conversational webhook management (`forgejo`, `gitea`, `github`, `gitlab`). |
-| `HELIOS_GIT_API_URL` | `""` | Base API URL of your Git server (e.g., `https://api.github.com` or `https://git.example.com`). |
-| `HELIOS_GIT_TOKEN` | `""` | Personal Access Token with repo/webhook permissions for `manage_git_webhooks`. |
-| `HELIOS_WEBHOOK_URL` | `""` | Target webhook URL registered on Git providers (e.g., `https://helios.example.com/webhook/git`). |
 
 ---
 
