@@ -705,7 +705,7 @@ if os.path.exists(path):
             flags=re.DOTALL,
         )
     else:
-        new_content = directive + '\n\n' + content
+        new_content = directive + '\\n\\n' + content
     with open(real_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
 else:
