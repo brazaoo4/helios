@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.2.0] - 2026-10-26
+
+### Features
+
+- **Onboarding**: Enforce Write-Through Definition of Done (DoD) in global client directives (`GEMINI.md`, `CLAUDE.md`, `.cursor/rules/helios.mdc`) and `/remember` skill across all supported environments.
+
 ## [1.0.0] - 2026-10-26
 
 ### Features

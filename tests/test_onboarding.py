@@ -75,6 +75,8 @@ def test_global_directive_roles():
     assert workstation_directive.startswith("<!-- HELIOS:START -->")
     assert workstation_directive.strip().endswith("<!-- HELIOS:END -->")
     assert "Pre-Flight Memory Check" in workstation_directive
+    assert "Write-Through Memory Capture" in workstation_directive
+    assert "Before ending any session" not in workstation_directive
     assert "<= 25 words" in workstation_directive
     assert "docker logs --tail=50" not in workstation_directive
 
@@ -86,6 +88,8 @@ def test_global_directive_roles():
     assert server_directive.startswith("<!-- HELIOS:START -->")
     assert server_directive.strip().endswith("<!-- HELIOS:END -->")
     assert "Pre-Flight Memory Check" in server_directive
+    assert "Write-Through Memory Capture (Definition of Done)" in server_directive
+    assert "Before ending any session" not in server_directive
     assert "homelab" in server_directive
     assert "docker logs --tail=50" in server_directive
     assert "journalctl -n 40 --no-pager" in server_directive

@@ -169,7 +169,11 @@ def generate_global_directive(
             "5. **Terminal Token Diet (Headless Host)**:\n"
             "   - Never run unbounded logs. Always use `docker logs --tail=50`, `journalctl -n 40 --no-pager`, and `git status -s`.\n"
             "   - Generate targeted unified diffs or minimal block replacements rather than entire redundant files.\n"
-            "6. **Session Memory Maintenance**: Before ending any session, run `/remember` or call `save_memory()` to capture architectural decisions, new tools/endpoints, changed ports/paths, or non-obvious bug fixes."
+            "6. **Write-Through Memory Capture (Definition of Done)**:\n"
+            "   - Any infrastructure change, docker stack deployment, port allocation, repo movement, CI/CD setup, or non-obvious operational bug fix is **STRICTLY INCOMPLETE** until persisted to Helios via `save_memory()`.\n"
+            "   - Never defer memory capture to session end or wait for user prompting. Persist changes immediately upon verifying them.\n"
+            "7. **Periodic Distillation Audit**:\n"
+            "   - Run the `/remember` skill or audit memories before context compaction or upon concluding a major milestone to prune obsolete facts (`deprecate_memory`) and ensure slot alignment."
         )
     else:
         # Workstation / IDE environment (default)
@@ -181,9 +185,9 @@ def generate_global_directive(
             "2. **Stale Memory Protocol**: When a memory is flagged `[STALE]`, inspect the referenced `anchor_files` before relying on it:\n"
             "   - If still accurate: call `revalidate_memories(memory_ids=[<id>])`.\n"
             "   - If updated: call `save_memory(scope=..., category='fact', content=..., subject='...')`.\n"
-            "3. **Architectural Updates & Session Maintenance**: When adding dependencies, changing ports, establishing conventions, or fixing non-obvious bugs, persist them immediately or at session close with `save_memory()`.\n"
+            "3. **Write-Through Memory Capture (Definition of Done)**: When adding dependencies, changing ports, establishing conventions, modifying schemas, or fixing non-obvious bugs, persist them immediately with `save_memory()`. A task is incomplete until its architectural delta is recorded.\n"
             f"4. **AUDN Write Gate**: Keep facts atomic and **<= {limit} words**. Omit conversational filler. Never store API secrets or bulky code dumps.\n"
-            "5. **Session Wrap-Up**: Call the `/remember` skill or `save_memory()` before clearing context to record key findings."
+            "5. **Periodic Distillation Audit**: Call the `/remember` skill or audit memories before clearing context or after major milestones to clean up obsolete entries."
         )
 
     return f"<!-- HELIOS:START -->\n{body}\n<!-- HELIOS:END -->"
@@ -195,12 +199,13 @@ def generate_remember_skill(word_limit: int | None = None) -> str:
     return (
         "---\n"
         "name: remember\n"
-        "description: Distill durable architecture rules, changed ports, and bug learnings from the current session into Helios before clearing context.\n"
+        "description: Distill durable architecture rules, changed ports, and bug learnings from the session into Helios before clearing context or after major milestones.\n"
         "---\n\n"
         "# Helios Remember Skill\n\n"
-        "Use this skill at the end of a session or after significant architectural changes.\n\n"
+        "Use this skill for periodic distillation audits, before context compaction, or after major milestones to verify memory health.\n\n"
+        "Note: Continuous state mutations (ports, stacks, bug fixes) should already be captured immediately via write-through `save_memory` calls.\n\n"
         "## Steps to Execute:\n"
-        "1. **Analyze Session Learnings**: Identify new ports, stack configs, bug fixes, or coding guardrails established in this conversation.\n"
+        "1. **Analyze Session Learnings**: Identify any unpersisted ports, stack configs, bug fixes, or coding guardrails established in this conversation.\n"
         "2. **Check Existing Slots**: Call `recall_memories(scope=\"<current_scope>\")` to find existing subject slots.\n"
         "3. **Persist Updates**:\n"
         "   - To update a fact: `save_memory(scope=..., category='fact', content=..., subject='<slot_key>')` (automatically supersedes older records sharing slot).\n"

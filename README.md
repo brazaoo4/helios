@@ -32,6 +32,7 @@ AI coding agents suffer from two fundamental failure modes: **amnesia** (forgett
 ### Core Design Pillars
 
 * **Strict Token Diet**: Enforces atomic, high-density facts (`≤ 25 words` by default) so agent context windows stay lean, fast, and focused.
+* **Write-Through Architecture (Definition of Done)**: Replaces fragile deferred end-of-session memory saves with continuous, atomic persistence. Tasks altering infrastructure, ports, schemas, dependencies, or resolving non-obvious bugs are strictly incomplete until recorded in Helios.
 * **Deterministic Lineage (AUDN Protocol)**: Facts operate on **A**dd, **U**pdate, **D**eprecate, or **N**o-op semantics. Saving a fact to an existing `(scope, subject)` slot automatically supersedes the old fact and logs the transition in a historical audit trail.
 * **Git-Anchored Drift Detection**: Memories can be anchored to repo configuration files (e.g., `docker-compose.yml`, `prisma/schema.prisma`). When a `git push` modifies an anchored file on **GitHub, Forgejo, Gitea, or GitLab**, Helios automatically flags the memory as `[STALE]` so your agent inspects the diff before acting.
 * **Dual-Plane Storage**: Sub-millisecond **SQLite WAL + FTS5 (BM25)** full-text search for agents, mirrored into human-readable **Markdown files** (`/data/exports/<scope>.md`) and crash-safe `.tar.gz` online snapshots for developers.
@@ -227,11 +228,11 @@ Helios encloses its global agent instructions inside idempotent HTML comment del
 <!-- HELIOS:START -->
 # Global Agent Directives — Helios Memory Protocol
 You are connected to Helios, a centralized token-budgeted memory engine.
-1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>")` at session start.
+1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>")` at task start.
 2. Stale Protocol: When a memory is marked `[STALE]`, inspect `anchor_files` before relying on it.
-3. Update Rule: Persist architectural decisions, changed ports, or conventions via `save_memory()`.
+3. Write-Through DoD: Any change to ports, stacks, dependencies, or bug fixes is INCOMPLETE until `save_memory()` is called.
 4. Token Diet: Keep facts atomic (<= 25 words).
-5. Wrap-Up: Run the `/remember` skill before clearing context.
+5. Distillation Audit: Run `/remember` before clearing context or after major milestones.
 <!-- HELIOS:END -->
 ```
 
