@@ -1111,11 +1111,14 @@ async def setup_powershell_script(request: Request) -> Response:
     """
     HTTP GET /setup.ps1 endpoint returning an automated 1-liner PowerShell setup script.
     Usage: irm https://<host>/setup.ps1 | iex
+    Supports ?token=..., ?role=server-cli|workstation, ?client=all|cursor|antigravity
     """
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     query_token = request.query_params.get("token")
-    script = generate_setup_powershell(base_url=base_url, query_token=query_token)
+    role = request.query_params.get("role", "workstation")
+    client = request.query_params.get("client", "all")
+    script = generate_setup_powershell(base_url=base_url, query_token=query_token, instance_role=role, client=client)
     return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
 
 
@@ -1123,11 +1126,14 @@ async def setup_bash_script(request: Request) -> Response:
     """
     HTTP GET /setup.sh endpoint returning an automated 1-liner Bash setup script.
     Usage: curl -fsSL https://<host>/setup.sh | bash
+    Supports ?token=..., ?role=server-cli|workstation, ?client=all|cursor|antigravity
     """
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     query_token = request.query_params.get("token")
-    script = generate_setup_bash(base_url=base_url, query_token=query_token)
+    role = request.query_params.get("role", "workstation")
+    client = request.query_params.get("client", "all")
+    script = generate_setup_bash(base_url=base_url, query_token=query_token, instance_role=role, client=client)
     return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
 
 

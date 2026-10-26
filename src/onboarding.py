@@ -439,26 +439,34 @@ def generate_setup_markdown(
     )
 
 
-def generate_setup_powershell(base_url: str, query_token: str | None = None) -> str:
+def generate_setup_powershell(
+    base_url: str,
+    query_token: str | None = None,
+    instance_role: str = "workstation",
+    client: str = "all",
+) -> str:
     """
     Generate an automated, self-contained Windows PowerShell onboarding script.
     Usage: irm https://<host>/setup.ps1 | iex
-    Handles NTFS symlinks, CRLF line endings, and idempotent marker replacement.
+    Handles NTFS symlinks, CRLF line endings, multi-client auto-detection, and idempotent marker replacement.
     """
     clean_base = base_url.rstrip("/")
     token_suffix = ""
     if query_token and query_token.strip():
         token_suffix = f"?token={urllib.parse.quote(query_token.strip(), safe='')}"
     mcp_url = f"{clean_base}/mcp{token_suffix}"
+    sse_url = f"{clean_base}/sse{token_suffix}"
     active_limit = get_word_limit()
-    directive = generate_global_directive("workstation", word_limit=active_limit).strip()
+    directive = generate_global_directive(instance_role, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
+    role_norm = instance_role.strip().lower()
+    client_norm = client.strip().lower()
 
     return f"""# Helios Automated Client Setup for Windows PowerShell
 $ErrorActionPreference = 'Stop'
-Write-Host "Configuring Helios client environment for {clean_base}..." -ForegroundColor Cyan
+Write-Host "Configuring Helios client environment for {clean_base} (role: {role_norm})..." -ForegroundColor Cyan
 
-# 1. MCP Configuration (~/.gemini/config/mcp_config.json)
+# 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
 $configDir = Join-Path $env:USERPROFILE ".gemini\\config"
 if (-not (Test-Path $configDir)) {{ New-Item -ItemType Directory -Path $configDir -Force | Out-Null }}
 $mcpConfigPath = Join-Path $configDir "mcp_config.json"
@@ -480,9 +488,46 @@ if (-not $mcpData.ContainsKey("mcpServers") -or $null -eq $mcpData.mcpServers) {
 $mcpData.mcpServers["helios"] = @{{ url = "{mcp_url}" }}
 $mcpJson = $mcpData | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($mcpConfigPath, $mcpJson, [System.Text.Encoding]::UTF8)
-Write-Host "  [OK] MCP server registered in $mcpConfigPath" -ForegroundColor Green
+Write-Host "  [OK] Antigravity MCP registered in $mcpConfigPath" -ForegroundColor Green
 
-# 2. Global Directive (GEMINI.md with CRLF and symlink handling)
+# 2. Cursor MCP Configuration (if %USERPROFILE%\\.cursor exists or client is cursor/all)
+$cursorDir = Join-Path $env:USERPROFILE ".cursor"
+if ((Test-Path $cursorDir) -or "{client_norm}" -eq "cursor" -or "{client_norm}" -eq "all") {{
+    if (-not (Test-Path $cursorDir)) {{ New-Item -ItemType Directory -Path $cursorDir -Force | Out-Null }}
+    $cursorMcpPath = Join-Path $cursorDir "mcp.json"
+    $cursorData = @{{ mcpServers = @{{}} }}
+    if (Test-Path $cursorMcpPath) {{
+        try {{
+            $cExisting = Get-Content -Path $cursorMcpPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($cExisting -and $cExisting.ContainsKey("mcpServers")) {{ $cursorData = $cExisting }}
+        }} catch {{}}
+    }}
+    if (-not $cursorData.ContainsKey("mcpServers") -or $null -eq $cursorData.mcpServers) {{ $cursorData.mcpServers = @{{}} }}
+    $cursorData.mcpServers["helios"] = @{{ url = "{sse_url}" }}
+    $cursorJson = $cursorData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($cursorMcpPath, $cursorJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Cursor MCP registered in $cursorMcpPath" -ForegroundColor Green
+}}
+
+# 3. Claude Desktop Configuration (if %APPDATA%\\Claude exists or client is claude-desktop/all)
+$claudeDir = Join-Path $env:APPDATA "Claude"
+if ((Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop") {{
+    $claudeMcpPath = Join-Path $claudeDir "claude_desktop_config.json"
+    $claudeData = @{{ mcpServers = @{{}} }}
+    if (Test-Path $claudeMcpPath) {{
+        try {{
+            $clExisting = Get-Content -Path $claudeMcpPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($clExisting -and $clExisting.ContainsKey("mcpServers")) {{ $claudeData = $clExisting }}
+        }} catch {{}}
+    }}
+    if (-not $claudeData.ContainsKey("mcpServers") -or $null -eq $claudeData.mcpServers) {{ $claudeData.mcpServers = @{{}} }}
+    $claudeData.mcpServers["helios"] = @{{ command = "npx"; args = @("-y", "mcp-remote", "{sse_url}") }}
+    $claudeJson = $claudeData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($claudeMcpPath, $claudeJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Claude Desktop MCP registered in $claudeMcpPath" -ForegroundColor Green
+}}
+
+# 4. Global Directive (GEMINI.md with CRLF and symlink handling)
 $geminiPath = Join-Path $configDir "GEMINI.md"
 $directiveText = @'
 {directive}
@@ -502,7 +547,7 @@ if (Test-Path $geminiPath) {{
 }}
 Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Green
 
-# 3. /remember Skill (~/.gemini/skills/remember/SKILL.md)
+# 5. /remember Skill (~/.gemini/skills/remember/SKILL.md)
 $skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
 if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
 $skillPath = Join-Path $skillDir "SKILL.md"
@@ -512,29 +557,45 @@ $skillText = @'
 [System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
 Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
 
-Write-Host "`nHelios setup complete! Restart Antigravity IDE / CLI and call manage_git_webhooks(action='list') to verify." -ForegroundColor Cyan
+Write-Host "`n==================================================" -ForegroundColor Cyan
+Write-Host "Helios Client Environment Configured Successfully!" -ForegroundColor Cyan
+Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host "Next actions for AI agent / developer:"
+Write-Host "  1. Restart active IDE window or agent session to discover 'helios'."
+Write-Host "  2. Call recall_memories(scope='<repo>') to verify memory connection."
+Write-Host "  3. Call manage_git_webhooks(action='list') to audit push drift tracking."
 """
 
 
-def generate_setup_bash(base_url: str, query_token: str | None = None) -> str:
+def generate_setup_bash(
+    base_url: str,
+    query_token: str | None = None,
+    instance_role: str = "workstation",
+    client: str = "all",
+) -> str:
     """
     Generate an automated Linux/macOS bash onboarding script.
     Usage: curl -fsSL https://<host>/setup.sh | bash
+    Handles multi-client auto-detection, POSIX symlinks, and idempotent marker replacement.
     """
     clean_base = base_url.rstrip("/")
     token_suffix = ""
     if query_token and query_token.strip():
         token_suffix = f"?token={urllib.parse.quote(query_token.strip(), safe='')}"
     mcp_url = f"{clean_base}/mcp{token_suffix}"
+    sse_url = f"{clean_base}/sse{token_suffix}"
     active_limit = get_word_limit()
-    directive = generate_global_directive("workstation", word_limit=active_limit).strip()
+    directive = generate_global_directive(instance_role, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
+    role_norm = instance_role.strip().lower()
+    client_norm = client.strip().lower()
 
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 
-echo "Configuring Helios client environment for {clean_base}..."
+echo "Configuring Helios client environment for {clean_base} (role: {role_norm})..."
 
+# 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
 CONFIG_DIR="$HOME/.gemini/config"
 mkdir -p "$CONFIG_DIR"
 MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
@@ -556,9 +617,67 @@ data['mcpServers']['helios'] = {{'url': mcp_url}}
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 PYEOF
-echo "  [OK] MCP server registered in $MCP_CONFIG"
+echo "  [OK] Antigravity MCP registered in $MCP_CONFIG"
 
-# Global Directive
+# 2. Cursor MCP Configuration (if ~/.cursor exists or client is cursor/all)
+CURSOR_DIR="$HOME/.cursor"
+if [ -d "$CURSOR_DIR" ] || [ "{client_norm}" = "cursor" ] || [ "{client_norm}" = "all" ]; then
+    mkdir -p "$CURSOR_DIR"
+    CURSOR_MCP="$CURSOR_DIR/mcp.json"
+    CURSOR_MCP="$CURSOR_MCP" SSE_URL="{sse_url}" python3 - <<'PYEOF'
+import json, os
+path = os.environ["CURSOR_MCP"]
+sse_url = os.environ["SSE_URL"]
+data = {{'mcpServers': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
+    data['mcpServers'] = {{}}
+data['mcpServers']['helios'] = {{'url': sse_url}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+    echo "  [OK] Cursor MCP registered in $CURSOR_MCP"
+fi
+
+# 3. Claude Desktop Configuration (if directory exists or client is claude-desktop/all)
+for CLAUDE_BASE in "$HOME/.config/Claude" "$HOME/Library/Application Support/Claude"; do
+    if [ -d "$CLAUDE_BASE" ] || [ "{client_norm}" = "claude-desktop" ]; then
+        mkdir -p "$CLAUDE_BASE"
+        CLAUDE_MCP="$CLAUDE_BASE/claude_desktop_config.json"
+        CLAUDE_MCP="$CLAUDE_MCP" SSE_URL="{sse_url}" python3 - <<'PYEOF'
+import json, os
+path = os.environ["CLAUDE_MCP"]
+sse_url = os.environ["SSE_URL"]
+data = {{'mcpServers': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
+    data['mcpServers'] = {{}}
+data['mcpServers']['helios'] = {{'command': 'npx', 'args': ['-y', 'mcp-remote', sse_url]}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+        echo "  [OK] Claude Desktop MCP registered in $CLAUDE_MCP"
+        break
+    fi
+done
+
+# 4. Claude Code CLI (if claude CLI binary exists in PATH)
+if command -v claude >/dev/null 2>&1; then
+    claude mcp add --transport sse helios "{sse_url}" >/dev/null 2>&1 || true
+    echo "  [OK] Claude Code CLI MCP registered"
+fi
+
+# 5. Global Directive (GEMINI.md with symlink resolution)
 GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
 DIRECTIVE_CONTENT="$(cat <<'HELIOS_DIRECTIVE_EOF'
 {directive}
@@ -581,7 +700,7 @@ if os.path.exists(path):
             flags=re.DOTALL,
         )
     else:
-        new_content = directive + '\\n\\n' + content
+        new_content = directive + '\n\n' + content
     with open(real_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
 else:
@@ -590,7 +709,7 @@ else:
 PYEOF
 echo "  [OK] Global directive embedded in $GEMINI_PATH"
 
-# /remember Skill
+# 6. /remember Skill (~/.gemini/skills/remember/SKILL.md)
 SKILL_DIR="$HOME/.gemini/skills/remember"
 mkdir -p "$SKILL_DIR"
 cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
@@ -599,5 +718,11 @@ HELIOS_SKILL_EOF
 echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
 
 echo ""
-echo "Helios setup complete! Restart Antigravity IDE / CLI and call manage_git_webhooks(action='list') to verify."
+echo "=================================================="
+echo "Helios client onboarding complete!"
+echo "Action required for AI agents:"
+echo "  1. Restart active IDE window or CLI agent session to load 'helios'."
+echo "  2. Call recall_memories(scope='<repo>') to verify memory connection."
+echo "  3. Call manage_git_webhooks(action='list') to audit push drift tracking."
+echo "=================================================="
 """

@@ -275,3 +275,27 @@ def test_resolve_server_base_url_proxy_chains_and_token_encoding():
     assert "token=sec%2Bret%2Ftoken%3D123" in md
     assert "https://helios.internal.mesh:8443/setup.ps1?token=sec%2Bret%2Ftoken%3D123" in md
     assert "https://helios.internal.mesh:8443/setup.sh?token=sec%2Bret%2Ftoken%3D123" in md
+
+
+def test_setup_scripts_role_and_client_customization():
+    # 1. Bash customization with server-cli role and cursor client
+    sh = generate_setup_bash(
+        "https://helios.example.com",
+        instance_role="server-cli",
+        client="cursor",
+    )
+    assert "role: server-cli" in sh
+    assert "docker logs --tail=50" in sh
+    assert "Cursor MCP registered" in sh
+    assert "Antigravity MCP registered" in sh
+
+    # 2. PowerShell customization with server-cli role and cursor client
+    ps = generate_setup_powershell(
+        "https://helios.example.com",
+        instance_role="server-cli",
+        client="cursor",
+    )
+    assert "role: server-cli" in ps
+    assert "docker logs --tail=50" in ps
+    assert "Cursor MCP registered" in ps
+    assert "Antigravity MCP registered" in ps
