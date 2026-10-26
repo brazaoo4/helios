@@ -1,8 +1,16 @@
 import json
-import pytest
 from unittest.mock import patch
 
-from src.db import get_connection, init_db, query_memories, resolve_scope, set_alias, upsert_memory
+import pytest
+
+from src.db import (
+    get_connection,
+    init_db,
+    query_memories,
+    resolve_scope,
+    set_alias,
+    upsert_memory,
+)
 from src.seed import (
     INITIAL_FACTS,
     clear_memories,

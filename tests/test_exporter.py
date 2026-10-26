@@ -1,9 +1,17 @@
 import sqlite3
 import tarfile
 from pathlib import Path
+
 import pytest
 
-from src.db import flag_stale_by_files, get_connection, init_db, migrate_scope, set_alias, upsert_memory
+from src.db import (
+    flag_stale_by_files,
+    get_connection,
+    init_db,
+    migrate_scope,
+    set_alias,
+    upsert_memory,
+)
 from src.exporter import (
     atomic_write,
     create_portable_archive,
@@ -170,7 +178,7 @@ def test_create_portable_archive(tmp_path):
 
 def test_sync_markdown_exports_cleanup_on_scope_migration():
     # Create active memory and supersede one to have both active.md and changelog_history.md
-    m1 = upsert_memory("ticket-tracker", "fact", "Old port was 3000", subject="app-port")
+    upsert_memory("ticket-tracker", "fact", "Old port was 3000", subject="app-port")
     upsert_memory("ticket-tracker", "fact", "New port is 3001", subject="app-port")
 
     sync_markdown_exports()

@@ -3,7 +3,7 @@ import hmac
 import json
 import tarfile
 from io import BytesIO
-from pathlib import Path
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -430,8 +430,9 @@ def test_export_http_endpoints():
 
 def test_transport_security_allows_reverse_proxy_domain():
     import anyio
-    from starlette.requests import Request
     from mcp.server.sse import SseServerTransport
+    from starlette.requests import Request
+
     from src.server import mcp
 
     t = SseServerTransport("/messages", security_settings=mcp.settings.transport_security)
@@ -473,6 +474,7 @@ def test_hybrid_mcp_endpoints():
 
 def test_hybrid_mcp_stale_session_fallback():
     import anyio
+
     from src.server import hybrid_handler
 
     # When a client sends a GET request with an expired/stale mcp-session-id,
@@ -779,7 +781,7 @@ def test_recall_memories_empty_category_normalization():
 def test_recall_memories_stale_filter_does_not_bump_hit_count():
     from src.db import get_connection
     save_memory(scope="audit-test", category="fact", content="Temporary facts on 8080", subject="tmp", anchor_files=["file.txt"])
-    
+
     with TestClient(app) as client:
         client.post("/webhook/git", json={"repository": {"name": "audit-test"}, "commits": [{"modified": ["file.txt"]}]})
 

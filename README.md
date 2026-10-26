@@ -4,10 +4,12 @@
 
 **The Token-Budgeted, Drift-Aware MCP Memory Engine for AI Coding Agents**
 
+[![CI/CD](https://github.com/brazaoo4/helios/actions/workflows/pipeline.yml/badge.svg)](https://github.com/brazaoo4/helios/actions/workflows/pipeline.yml)
+[![GHCR Container](https://img.shields.io/badge/Container-GHCR-181717?logo=github)](https://github.com/brazaoo4/helios/pkgs/container/helios)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Streamable%20HTTP%20%26%20SSE-emerald.svg)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/SQLite-WAL%20%2B%20FTS5%20BM25-informational.svg)](https://www.sqlite.org/fts5.html)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 *Stop repeating architectural context across sessions. Stop agents from acting on outdated documentation.*
 
@@ -46,7 +48,7 @@ Create a `compose.yaml` file (or paste directly into Dockhand / Portainer) and r
 ```yaml
 services:
   helios:
-    image: ghcr.io/<your-username>/helios:latest
+    image: ghcr.io/brazaoo4/helios:latest
     # Or to build locally from source:
     # build: .
     container_name: helios
@@ -116,17 +118,20 @@ services:
   ```
 * **Cold-Boot Seeding (Optional)**: If you drop a `seed.yaml` file (see [seed.example.yaml](seed.example.yaml)) into `./data/seed.yaml`, Helios will automatically ingest it on startup and rename it to `seed.yaml.imported`.
 
-### Building from Source (Alternative)
+<details>
+<summary><b>Building from Source (Alternative)</b></summary>
 
 If you aren't pulling a pre-built image and want to build from the repository:
 
 ```bash
-git clone https://github.com/<your-username>/helios.git
+git clone https://github.com/brazaoo4/helios.git
 cd helios
 cp .env.example .env
 mkdir -p data && chown -R 1000:1000 data
 docker compose up -d --build
 ```
+
+</details>
 
 ---
 
@@ -467,7 +472,8 @@ source .venv/bin/activate
 # Install development dependencies
 pip install -r requirements-dev.txt
 
-# Run complete test suite
+# Run linter & complete test suite
+ruff check src/ tests/
 pytest tests/ -q
 
 # Validate declarative seed fact invariants
@@ -478,4 +484,6 @@ python -m src.seed --check
 
 ## 📄 License
 
-Helios is open-source software licensed under the [MIT License](LICENSE).
+Helios is open-source software licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0-only)](LICENSE).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [SECURITY.md](SECURITY.md) for vulnerability reporting.

@@ -245,7 +245,7 @@ def generate_client_bundle(
         for c in target_clients:
             path = get_mcp_config_path(c, plat)
             if c == "claude-code":
-                lines.append(f"- **Claude Code**: Run CLI command `claude mcp remove helios`")
+                lines.append("- **Claude Code**: Run CLI command `claude mcp remove helios`")
             else:
                 lines.append(f"- **{c.capitalize()}**: Open `{path}` and remove the `\"helios\"` key under `\"mcpServers\"`.")
 

@@ -2,15 +2,17 @@ import contextlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from src.config import (
     get_episodic_ttl_days,
     get_memory_data_dir,
     get_word_limit,
 )
+
 
 def get_data_dir() -> Path:
     """
@@ -24,13 +26,13 @@ def get_db_path() -> Path:
 
 def now_iso() -> str:
     """Return current UTC timestamp in compact ISO-8601 format (e.g. 2026-10-20T17:38:00Z)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 @contextlib.contextmanager
 def get_connection() -> Generator[sqlite3.Connection, None, None]:
     """
     Thread-safe context manager for SQLite connections.
-    
+
     1. Ensures target directory exists.
     2. Opens SQLite connection with row dictionary mapping enabled.
     3. Sets high-concurrency PRAGMAs (WAL, busy timeout, foreign keys).
@@ -226,8 +228,7 @@ def _normalize_alias_key(raw_alias: str) -> str:
         return ""
     normalized = raw_alias.strip().replace("\\", "/").rstrip("/")
     folder_name = normalized.split("/")[-1].lower()
-    if folder_name.endswith(".git"):
-        folder_name = folder_name[:-4]
+    folder_name = folder_name.removesuffix(".git")
     return folder_name
 
 
@@ -366,7 +367,7 @@ def resolve_scope(raw_scope: str, conn: sqlite3.Connection | None = None) -> str
 def migrate_scope(from_scope: str, to_scope: str, register_alias: bool = True) -> dict:
     """
     Migrate all memories from from_scope to to_scope.
-    
+
     - Validates and normalizes scope names.
     - Resolves active slot collisions by superseding older records (by valid_from / id).
     - Updates all rows in memories where scope = from_clean to to_clean.
@@ -452,7 +453,7 @@ def migrate_scope(from_scope: str, to_scope: str, register_alias: bool = True) -
 def prune_expired_episodic() -> int:
     """
     Archive temporary 'episodic' memories unaccessed for more than HELIOS_EPISODIC_TTL_DAYS days.
-    
+
     Sets status='archived' and valid_to=now_iso().
     Leaves rules, facts, preferences, and recent episodic memories untouched.
     Returns the count of archived rows.
@@ -461,7 +462,7 @@ def prune_expired_episodic() -> int:
         return 0
 
     ttl_days = get_episodic_ttl_days()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     with get_connection() as conn:
         has_expired = conn.execute(
@@ -643,7 +644,7 @@ def query_memories(
 ) -> list[dict]:
     """
     Retrieve active memories using FTS5 BM25 search or prioritized categorical fallback.
-    
+
     - Prunes expired episodic memories first.
     - Searches both the resolved scope and 'global' (if include_global=True).
     - Clamps limit between 1 and 50.
@@ -770,7 +771,7 @@ def query_memories(
 def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: str) -> int:
     """
     Mark active memories as 'stale' if any of their anchor_files were modified in a Git commit.
-    
+
     - Normalizes slashes and matches strictly on exact path or '/'-bounded path suffix.
     - Sets status='stale' and stale_reason='<matched_file> modified in commit <short_sha>'.
     - Returns the count of memories transitioned from active to stale.

@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
 import pytest
 
-import src.config as config
+from src import config
 from src.db import (
     delete_runtime_setting,
     flag_stale_by_files,
@@ -159,7 +160,7 @@ def test_dynamic_scope_aliases_crud():
 # --- 2.3: TTL Pruning for Episodic Notes ---
 
 def test_prune_expired_episodic(monkeypatch):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ts_15_days_ago = (now - timedelta(days=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ts_13_days_ago = (now - timedelta(days=13)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ts_20_days_ago = (now - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -318,7 +319,7 @@ def test_query_memories_empty_query_priority():
 
 
 def test_query_excludes_superseded_and_tracks_hits():
-    res1 = upsert_memory("infrastructure", "fact", "Old port was 7070", subject="port")
+    upsert_memory("infrastructure", "fact", "Old port was 7070", subject="port")
     upsert_memory("infrastructure", "fact", "New port is 7071", subject="port")
 
     # Old memory must not be retrieved

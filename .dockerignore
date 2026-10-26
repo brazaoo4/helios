@@ -1,4 +1,4 @@
-# Virtual environment & caches
+# Virtual environments & python caches
 .venv/
 venv/
 __pycache__/
@@ -7,24 +7,39 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+.ruff_cache/
 
-# Local databases and exports
-/data/
-/test_data/
+# Local databases, runtime state, and test directories
+data/
+test_data/
 *.db
 *.db-wal
 *.db-shm
 *.tar.gz
 
-# Git & IDE configs
+# Git, CI, and IDE configurations
 .git/
 .gitignore
+.gitattributes
+.github/
 .forgejo/
 .idea/
 .vscode/
 *.swp
 .history/
 
-# Docs and tasks
+# Community, governance, and docs (do not bust Buildx layers)
+*.md
+LICENSE
+CONTRIBUTING.md
+SECURITY.md
+docs/
 TASKS.md
-README.md
+
+# Packaging & Release Please files
+pyproject.toml
+requirements-dev.txt
+release-please*
+.release-please*
+.env*
+seed.example.yaml

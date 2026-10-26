@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "helios-mcp"
+version = "1.0.0"
+description = "Token-budgeted, drift-aware Model Context Protocol (MCP) memory engine backed by SQLite WAL and FTS5 BM25."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "AGPL-3.0-only" }
+authors = [
+    { name = "Bruno Brazão", email = "brunobrazao4@gmail.com" },
+]
+keywords = ["mcp", "ai", "agents", "memory", "sqlite", "fts5", "bm25", "llm"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 only (AGPL-3.0-only)",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = [
+    "fastmcp>=2.3.0,<3.0.0",
+    "starlette>=0.37.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0,<1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/brazaoo4/helios"
+Repository = "https://github.com/brazaoo4/helios"
+Issues = "https://github.com/brazaoo4/helios/issues"
+Changelog = "https://github.com/brazaoo4/helios/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]

@@ -7,7 +7,8 @@ import os
 import re
 import urllib.parse
 import uuid
-from typing import Annotated, AsyncGenerator, Literal, Optional
+from collections.abc import AsyncGenerator
+from typing import Annotated, Literal
 
 import anyio
 from pydantic import Field
@@ -70,22 +71,24 @@ from src.config import (
 )
 from src.db import (
     delete_runtime_setting,
-    deprecate_memory as db_deprecate_memory,
     flag_stale_by_files,
     get_connection,
-    get_runtime_setting,
     get_scope_statistics,
     init_db,
     list_aliases,
-    list_runtime_settings,
     migrate_scope,
     query_memories,
     remove_alias,
     resolve_scope,
-    revalidate_memories as db_revalidate_memories,
     set_alias,
     set_runtime_setting,
     upsert_memory,
+)
+from src.db import (
+    deprecate_memory as db_deprecate_memory,
+)
+from src.db import (
+    revalidate_memories as db_revalidate_memories,
 )
 from src.exporter import (
     create_portable_archive,
@@ -400,8 +403,7 @@ def manage_scope_alias(
             set_alias(alias, canonical_scope)
             mappings = list_aliases()
             clean_alias = alias.strip().replace("\\", "/").rstrip("/").split("/")[-1].lower()
-            if clean_alias.endswith(".git"):
-                clean_alias = clean_alias[:-4]
+            clean_alias = clean_alias.removesuffix(".git")
             resolved_target = mappings.get(clean_alias, canonical_scope.strip().lower())
             return f"Alias '{clean_alias}' mapped to canonical scope '{resolved_target}'."
         elif act in ("remove", "delete"):
@@ -918,7 +920,7 @@ def _detect_webhook_provider_and_verify(
         return provider, True
 
     # 4. Generic Authorization: Bearer <secret>
-    if auth_header and hmac.compare_digest(auth_header.encode("utf-8"), f"Bearer {webhook_secret}".encode("utf-8")):
+    if auth_header and hmac.compare_digest(auth_header.encode("utf-8"), f"Bearer {webhook_secret}".encode()):
         return provider, True
 
     return provider, False

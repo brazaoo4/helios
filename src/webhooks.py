@@ -8,6 +8,7 @@ webhook lifecycle management across Forgejo, Gitea, GitHub, and GitLab.
 import os
 import urllib.parse
 from typing import Any
+
 import httpx
 
 from src.config import (
@@ -70,7 +71,7 @@ def get_headers(provider: str, token: str) -> dict[str, str]:
 
 def _get_authenticated_user(client: httpx.Client, provider: str, api_url: str) -> str:
     """Fetch the authenticated username for ownership filtering."""
-    p = provider.strip().lower()
+    provider.strip().lower()
     endpoint = f"{api_url}/user"
     res = client.get(endpoint)
     if res.status_code == 200:

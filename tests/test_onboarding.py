@@ -1,9 +1,7 @@
-import json
 import pytest
 from starlette.testclient import TestClient
 
 from src.onboarding import (
-    generate_client_bundle,
     generate_global_directive,
     generate_remember_skill,
     generate_setup_bash,

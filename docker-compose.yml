@@ -1,7 +1,7 @@
 services:
   helios:
     build: .
-    image: ${HELIOS_IMAGE:-helios:latest}
+    image: ${HELIOS_IMAGE:-ghcr.io/brazaoo4/helios:latest}
     container_name: helios
     restart: unless-stopped
     user: "1000:1000"

@@ -1,6 +1,7 @@
-import pytest
+from unittest.mock import patch
+
 import httpx
-from unittest.mock import MagicMock, patch
+import pytest
 
 from src.db import init_db, set_alias, upsert_memory
 from src.server import manage_git_webhooks
@@ -8,7 +9,6 @@ from src.webhooks import (
     disable_repo_webhooks,
     enable_repo_webhooks,
     fetch_candidate_repositories,
-    find_helios_hook,
     get_headers,
     list_repo_webhooks,
     match_helios_scope,

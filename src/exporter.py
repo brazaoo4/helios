@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import threading
 from pathlib import Path
+
 from src.config import get_changelog_limit, get_memory_data_dir
 from src.db import get_connection, now_iso
 
@@ -78,7 +79,7 @@ def sync_markdown_exports() -> list[str]:
     """
     Render all active/stale memories to exports/<scope>.md
     and superseded/archived history to exports/changelog/<scope>_history.md.
-    
+
     Returns a list of all written file paths.
     """
     with _EXPORT_LOCK:

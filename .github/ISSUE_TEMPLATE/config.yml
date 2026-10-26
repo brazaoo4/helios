@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "🛡️ Security Vulnerability Report"
+    url: "https://github.com/brazaoo4/helios/security/advisories/new"
+    about: "Please do NOT report security vulnerabilities in public issues. Submit privately via GitHub Security Advisories or see SECURITY.md."
