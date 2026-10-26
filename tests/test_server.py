@@ -823,3 +823,10 @@ async def test_fastmcp_async_call_thread_offloading():
     # Output contains the rule
     content_text = res[0][0].text
     assert "Always offload sync tools" in content_text
+
+
+def test_auth_gate_middleware_pure_asgi_sse_stream():
+    with TestClient(app) as client:
+        with client.stream("GET", "/sse") as res:
+            assert res.status_code == 200
+            assert "text/event-stream" in res.headers.get("content-type", "")

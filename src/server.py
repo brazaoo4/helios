@@ -14,7 +14,6 @@ import anyio
 from pydantic import Field
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
@@ -709,31 +708,41 @@ def is_request_authenticated(request: Request) -> bool:
     return False
 
 
-class AuthGateMiddleware(BaseHTTPMiddleware):
+class AuthGateMiddleware:
     """
-    Zero-Trust Security Middleware:
+    Zero-Trust Security Middleware (Pure ASGI):
     - If HELIOS_API_KEY is unset, passes all requests (open local/mesh mode).
     - If set, enforces constant-time authentication via Authorization: Bearer <key> or ?token=<key>.
     - Exempts POST /webhook/* (and /hooks/git-commit), GET /health, and GET /setup.
+    - Pure ASGI implementation ensures compatibility with SSE and streaming HTTP responses
+      without Starlette BaseHTTPMiddleware response-wrapping assertion crashes.
     """
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        request = Request(scope, receive)
         if request.method == "OPTIONS":
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
         path = request.url.path
         if request.method == "GET" and (path == "/health" or path in ("/setup", "/setup.ps1", "/setup.sh")):
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
         if request.method == "POST" and (path.startswith("/webhook/") or path == "/hooks/git-commit"):
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
         if not is_request_authenticated(request):
-            return JSONResponse(
+            response = JSONResponse(
                 {"status": "error", "message": "Unauthorized: missing or invalid API key."},
                 status_code=401,
             )
+            return await response(scope, receive, send)
 
-        return await call_next(request)
+        return await self.app(scope, receive, send)
 
 
 # 4. Application Lifespan Context
