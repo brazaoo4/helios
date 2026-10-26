@@ -26,37 +26,7 @@ cp seed.example.yaml data/seed.yaml
 docker compose up -d --build
 ```
 
-### 1.2 Reverse Proxy Configuration (Traefik)
-```yaml
-services:
-  helios:
-    image: helios:latest
-    container_name: helios
-    restart: unless-stopped
-    user: "1000:1000"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    env_file:
-      - .env
-    volumes:
-      - ./data:/data
-    networks:
-      - web
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.helios.rule=Host(`helios.example.com`)"
-      - "traefik.http.routers.helios.entrypoints=websecure"
-      - "traefik.http.routers.helios.tls.certresolver=letsencrypt"
-      - "traefik.http.services.helios.loadbalancer.server.port=8000"
-
-networks:
-  web:
-    external: true
-```
-
-### 1.3 Core Environment Variables
+### 1.2 Core Environment Variables
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `MEMORY_DATA_DIR` | `/data` | Path inside container where SQLite (`memory.db`) and Markdown exports live. |
