@@ -16,7 +16,6 @@ cd helios
 
 # Configure environment & directories
 cp .env.example .env
-cp docker-compose.example.yml docker-compose.yml
 mkdir -p data
 
 # Optional: Seed initial architecture rules on cold-boot
