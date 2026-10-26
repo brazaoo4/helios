@@ -6,7 +6,9 @@ from src.onboarding import (
     generate_client_bundle,
     generate_global_directive,
     generate_remember_skill,
+    generate_setup_bash,
     generate_setup_markdown,
+    generate_setup_powershell,
     get_mcp_config_path,
     get_mcp_config_snippet,
     normalize_os_platform,
@@ -236,3 +238,40 @@ def test_get_client_setup_bundle_tool():
     assert "Lifecycle Action**: `switch_role`" in bundle_switch
     assert "Instance Role**: `server-cli`" in bundle_switch
     assert "docker logs --tail=50" in bundle_switch
+
+
+def test_setup_scripts_backtick_and_injection_safety():
+    # 1. PowerShell setup script uses single-quoted literal here-strings
+    ps_script = generate_setup_powershell("https://helios.example.com", query_token="my-token+123")
+    assert "$directiveText = @'" in ps_script
+    assert "'@" in ps_script
+    assert "$skillText = @'" in ps_script
+    assert "[regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', { param($m) $directiveText })" in ps_script
+    # Ensure backticks in directives are present verbatim and not stripped
+    assert "`anchor_files`" in ps_script
+    assert "recall_memories(" in ps_script
+
+    # 2. Bash setup script uses single-quoted heredocs and python env pass-through
+    sh_script = generate_setup_bash("https://helios.example.com", query_token="my-token+123")
+    assert "cat <<'HELIOS_DIRECTIVE_EOF'" in sh_script
+    assert "cat <<'HELIOS_SKILL_EOF'" in sh_script
+    assert "python3 - <<'PYEOF'" in sh_script
+    assert "lambda _: directive" in sh_script
+    assert "`anchor_files`" in sh_script
+    assert "recall_memories(" in sh_script
+
+
+def test_resolve_server_base_url_proxy_chains_and_token_encoding():
+    # Multi-hop proxy headers
+    headers = {
+        "X-Forwarded-Proto": "https, http",
+        "X-Forwarded-Host": "helios.internal.mesh:8443, reverse-proxy:8000",
+    }
+    resolved = resolve_server_base_url(headers)
+    assert resolved == "https://helios.internal.mesh:8443"
+
+    # Token URL-encoding in setup markdown 1-liners
+    md = generate_setup_markdown("https://helios.internal.mesh:8443", query_token="sec+ret/token=123")
+    assert "token=sec%2Bret%2Ftoken%3D123" in md
+    assert "https://helios.internal.mesh:8443/setup.ps1?token=sec%2Bret%2Ftoken%3D123" in md
+    assert "https://helios.internal.mesh:8443/setup.sh?token=sec%2Bret%2Ftoken%3D123" in md

@@ -39,7 +39,7 @@ flowchart TD
     end
 
     subgraph Egress["Sync & Observability Egress"]
-        MD["Markdown Mirror Sync<br/>(/data/export/&lt;scope&gt;.md)"]
+        MD["Markdown Mirror Sync<br/>(/data/exports/&lt;scope&gt;.md)"]
         TAR["Online SQLite Snapshot<br/>(helios_portable_bundle.tar.gz)"]
     end
 
@@ -102,7 +102,7 @@ flowchart TD
   - Redacts sensitive database telemetry from `GET /health` for unauthenticated callers.
 
 - **Dual-Faced Exports & Backups**:
-  - **Human-Readable Markdown**: Auto-synced `/data/export/<scope>.md` and `/data/export/changelog/<scope>_history.md`.
+  - **Human-Readable Markdown**: Auto-synced `/data/exports/<scope>.md` and `/data/exports/changelog/<scope>_history.md`.
   - **Machine Snapshots**: Online SQLite database backup bundled into `helios_portable_bundle.tar.gz` via `export_bundle()` or `GET /export/bundle`.
 
 ---

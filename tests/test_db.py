@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import pytest
 
@@ -640,3 +641,88 @@ def test_get_scope_statistics():
     assert stats[1]["active_count"] == 1
     assert stats[1]["stale_count"] == 0
     assert stats[1]["aliases"] == []
+
+
+def test_scope_alias_and_migration_constraints():
+    # 1. Disallow aliasing or migrating 'global' scope
+    with pytest.raises(ValueError, match="Cannot alias or migrate the reserved 'global' scope"):
+        set_alias("global", "infra")
+
+    with pytest.raises(ValueError, match="Cannot alias or migrate the reserved 'global' scope"):
+        migrate_scope("global", "infra")
+
+    # 2. Disallow self-aliasing
+    with pytest.raises(ValueError, match="Alias and canonical_scope cannot be identical"):
+        set_alias("infra", "infra")
+
+    with pytest.raises(ValueError, match="Source and target scopes cannot be identical"):
+        migrate_scope("infra", "infra")
+
+
+def test_uninitialized_db_fast_paths(tmp_path, monkeypatch):
+    empty_dir = tmp_path / "nonexistent_db_dir"
+    monkeypatch.setenv("MEMORY_DATA_DIR", str(empty_dir))
+
+    # All these should return safe empty values without crashing or creating empty files
+    assert get_runtime_setting("HELIOS_WORD_LIMIT") is None
+    assert prune_expired_episodic() == 0
+    assert list_aliases() == {}
+    assert resolve_scope("my-repo") == "my-repo"
+
+
+def test_normalize_repo_path_and_anchor_matching():
+    res = upsert_memory(
+        "infra",
+        "fact",
+        "Traefik reverse proxy",
+        subject="traefik",
+        anchor_files=["./stacks/monitoring/compose.yaml", r"stacks\monitoring\compose.yaml"],
+    )
+    # Check that anchor files are deduplicated and normalized
+    with get_connection() as conn:
+        row = conn.execute("SELECT anchor_files FROM memories WHERE id = ?", (res["id"],)).fetchone()
+        anchors = json.loads(row["anchor_files"])
+        assert anchors == ["stacks/monitoring/compose.yaml"]
+
+    # Flag stale using relative path with ./ prefix
+    flagged = flag_stale_by_files("infra", ["./stacks/monitoring/compose.yaml"], "sha999")
+    assert flagged == 1
+
+
+def test_duplicate_upsert_with_replaces_and_anchors():
+    m1 = upsert_memory("infra", "fact", "Old port was 7070", subject="port")
+    m2 = upsert_memory("infra", "fact", "New port is 8080", subject="port-new")
+
+    # Upserting identical fact content to m2, but with replaces_id pointing to m1
+    res = upsert_memory(
+        "infra",
+        "fact",
+        "New port is 8080",
+        subject="port-new",
+        anchor_files=["compose.yaml"],
+        replaces_id=m1["id"],
+    )
+    assert res["action"] == "superseded"
+    assert res["id"] == m2["id"]
+    assert res["superseded_ids"] == [m1["id"]]
+
+    # Verify m1 is superseded by m2 in DB
+    with get_connection() as conn:
+        m1_row = conn.execute("SELECT status, superseded_by, valid_to FROM memories WHERE id = ?", (m1["id"],)).fetchone()
+        assert m1_row["status"] == "superseded"
+        assert m1_row["superseded_by"] == m2["id"]
+        assert m1_row["valid_to"] is not None
+
+        # Verify m2 anchor_files updated
+        m2_row = conn.execute("SELECT anchor_files FROM memories WHERE id = ?", (m2["id"],)).fetchone()
+        assert json.loads(m2_row["anchor_files"]) == ["compose.yaml"]
+
+
+def test_multi_word_fts_stopword_filtering():
+    upsert_memory("ticketera", "fact", "Ticket API is deployed on port 8080", subject="api")
+    upsert_memory("ticketera", "fact", "Worker service is running on port 8081", subject="worker")
+
+    # Query with stopwords ('the', 'is', 'on') and single-letter contraction tokens ("don't" -> 't')
+    res = query_memories("ticketera", "don't verify the Ticket API on")
+    assert len(res) >= 1
+    assert res[0]["subject"] == "api"

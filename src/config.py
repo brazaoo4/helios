@@ -1,4 +1,6 @@
+import ipaddress
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +79,56 @@ MUTABLE_SETTINGS: dict[str, dict[str, Any]] = {
 }
 
 
+def validate_http_url(url: str, allow_loopback: bool = False) -> str:
+    """
+    Validate that an HTTP/HTTPS URL is well-formed, safe, and not pointing to
+    forbidden destinations (cloud metadata services, loopback if disallowed).
+    Allows RFC1918 LAN IPs, Tailscale (100.*), and Docker service hostnames.
+    """
+    cleaned = str(url).strip()
+    if not cleaned:
+        return ""
+
+    for ch in ('"', "'", "`", " ", "\t", "\n", "\r"):
+        if ch in cleaned:
+            raise ValueError(f"URL contains invalid characters: {cleaned!r}")
+
+    parsed = urllib.parse.urlsplit(cleaned)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"URL scheme must be http or https, got '{parsed.scheme}'.")
+
+    if not parsed.netloc or not parsed.hostname:
+        raise ValueError("URL must include a valid host/netloc.")
+
+    if parsed.username or parsed.password:
+        raise ValueError("URL must not contain embedded user credentials.")
+
+    if parsed.fragment:
+        raise ValueError("URL must not contain a URL fragment.")
+
+    host = parsed.hostname.lower()
+
+    if host == "metadata.google.internal" or host.startswith("metadata."):
+        raise ValueError(f"Access to cloud metadata host '{host}' is forbidden.")
+
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_link_local or host.startswith("169.254."):
+            raise ValueError(f"Access to link-local/cloud metadata IP '{host}' is forbidden.")
+        if not allow_loopback and (ip.is_loopback or host == "0.0.0.0"):
+            raise ValueError(f"Loopback IP address '{host}' is forbidden.")
+    except ValueError as exc:
+        if "forbidden" in str(exc):
+            raise
+        if host.startswith("169.254."):
+            raise ValueError(f"Access to link-local/cloud metadata host '{host}' is forbidden.")
+        if not allow_loopback and (host == "localhost" or host.endswith(".localhost")):
+            raise ValueError(f"Loopback host '{host}' is forbidden.")
+
+    clean_path = parsed.path.rstrip("/")
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, clean_path, parsed.query, ""))
+
+
 def _get_setting_from_db(key: str) -> str | None:
     """Fetch setting from SQLite runtime_settings table, safely handling uninitialized DB."""
     try:
@@ -117,6 +169,12 @@ def validate_setting_value(key: str, raw_value: Any) -> Any:
         val = str(raw_value).strip()
         return val if val else None
 
+    elif key in ("HELIOS_GIT_API_URL", "HELIOS_WEBHOOK_URL"):
+        return validate_http_url(str(raw_value) if raw_value is not None else "", allow_loopback=False)
+
+    elif key == "HELIOS_PUBLIC_URL":
+        return validate_http_url(str(raw_value) if raw_value is not None else "", allow_loopback=True)
+
     else:
         return str(raw_value).strip() if raw_value is not None else ""
 
@@ -132,9 +190,12 @@ def resolve_setting_with_source(key: str) -> tuple[Any, str]:
 
     # 1. Check SQLite runtime_settings table
     db_val = _get_setting_from_db(key)
-    if db_val is not None and db_val.strip():
-        val = validate_setting_value(key, db_val)
-        return val, "db"
+    if db_val is not None:
+        try:
+            val = validate_setting_value(key, db_val)
+            return val, "db"
+        except ValueError:
+            pass
 
     # 2. Check environment variable
     env_raw = os.getenv(key)

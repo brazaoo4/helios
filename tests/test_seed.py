@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import patch
 
-from src.db import get_connection, init_db, query_memories, resolve_scope
+from src.db import get_connection, init_db, query_memories, resolve_scope, set_alias, upsert_memory
 from src.seed import (
     INITIAL_FACTS,
     clear_memories,
@@ -283,3 +283,18 @@ memories:
     assert ingested_json == 1
     assert not seed_json.exists()
     assert (tmp_path / "seed.json.imported").exists()
+
+
+def test_clear_memories_foreign_key_safety():
+    set_alias("ticket-tracker", "ticketera")
+    m1 = upsert_memory("ticketera", "fact", "Old port was 8080", subject="port")
+    # Supersede m1
+    m2 = upsert_memory("ticket-tracker", "fact", "New port is 8081", subject="port", replaces_id=m1["id"])
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT superseded_by FROM memories WHERE id = ?", (m1["id"],)).fetchone()
+        assert row["superseded_by"] == m2["id"]
+
+    # Scoped deletion of ticketera should safely null out foreign key references and delete without IntegrityError
+    deleted = clear_memories(scope_filter="ticketera")
+    assert deleted == 2

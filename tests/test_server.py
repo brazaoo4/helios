@@ -476,7 +476,7 @@ def test_hybrid_mcp_stale_session_fallback():
     from src.server import hybrid_handler
 
     # When a client sends a GET request with an expired/stale mcp-session-id,
-    # it must fall back to legacy SSE (sse_app) rather than returning 404 Session Not Found.
+    # it must fall back to standard SSE (sse_app) rather than returning 404 Session Not Found.
     messages_sent = []
 
     async def fake_send(message):
@@ -767,3 +767,57 @@ def test_manage_scope_alias_list_with_statistics():
     assert "`homelab` -> `infra`" in list_res
     assert "### Active Scopes in Memory" in list_res
     assert "- `infra` (1 active, 1 stale) <- aliases: `homelab`" in list_res
+
+
+def test_recall_memories_empty_category_normalization():
+    save_memory(scope="shop", category="fact", content="Cart runs on port 4000", subject="cart-port")
+    # Passing empty string category should not trigger Pydantic validation error and should return fact
+    res = recall_memories(scope="shop", category="")
+    assert "Cart runs on port 4000" in res
+
+
+def test_recall_memories_stale_filter_does_not_bump_hit_count():
+    from src.db import get_connection
+    save_memory(scope="audit-test", category="fact", content="Temporary facts on 8080", subject="tmp", anchor_files=["file.txt"])
+    
+    with TestClient(app) as client:
+        client.post("/webhook/git", json={"repository": {"name": "audit-test"}, "commits": [{"modified": ["file.txt"]}]})
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT hit_count FROM memories WHERE scope = 'audit-test'").fetchone()
+        assert row["hit_count"] == 0
+
+    # Recall with status_filter="stale" should NOT increment hit count
+    stale_res = recall_memories(scope="audit-test", status_filter="stale")
+    assert "Temporary facts on 8080" in stale_res
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT hit_count FROM memories WHERE scope = 'audit-test'").fetchone()
+        assert row["hit_count"] == 0
+
+    # Normal recall should increment hit count
+    act_res = recall_memories(scope="audit-test", status_filter="all")
+    assert "Temporary facts on 8080" in act_res
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT hit_count FROM memories WHERE scope = 'audit-test'").fetchone()
+        assert row["hit_count"] == 1
+
+
+def test_git_webhook_payload_size_limit():
+    with TestClient(app) as client:
+        # 2 MB body exceeds 1 MB limit -> 413
+        huge_body = b"A" * (2 * 1024 * 1024)
+        res = client.post("/webhook/git", content=huge_body, headers={"content-type": "application/json"})
+        assert res.status_code == 413
+        assert "Payload exceeds 1MB limit" in res.text
+
+
+@pytest.mark.anyio
+async def test_fastmcp_async_call_thread_offloading():
+    save_memory(scope="global", category="rule", content="Always offload sync tools to worker thread")
+    res = await mcp.call_tool("recall_memories", {"scope": "global", "query": "offload"})
+    assert res is not None
+    # Output contains the rule
+    content_text = res[0][0].text
+    assert "Always offload sync tools" in content_text

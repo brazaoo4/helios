@@ -1,8 +1,12 @@
 import contextlib
+import functools
 import hashlib
 import hmac
 import json
 import os
+import re
+import urllib.parse
+import uuid
 from typing import Annotated, AsyncGenerator, Literal, Optional
 
 import anyio
@@ -17,10 +21,40 @@ from starlette.routing import Mount, Route
 
 try:
     from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
     from mcp.server.sse import TransportSecuritySettings
 except ImportError:
-    from fastmcp import FastMCP
+    try:
+        from fastmcp import FastMCP
+        from fastmcp.utilities.func_metadata import FuncMetadata
+    except ImportError:
+        FastMCP = None
+        FuncMetadata = None
     TransportSecuritySettings = None
+
+# Offload sync FastMCP tools to worker thread via anyio.to_thread.run_sync during async MCP calls
+if FuncMetadata is not None and not getattr(FuncMetadata, "_helios_offloaded", False):
+    _orig_call_fn = FuncMetadata.call_fn_with_arg_validation
+
+    async def _offloaded_call_fn(
+        self,
+        fn,
+        fn_is_async: bool,
+        arguments_to_validate,
+        arguments_to_pass_directly,
+    ):
+        arguments_pre_parsed = self.pre_parse_json(arguments_to_validate)
+        arguments_parsed_model = self.arg_model.model_validate(arguments_pre_parsed)
+        arguments_parsed_dict = arguments_parsed_model.model_dump_one_level()
+        arguments_parsed_dict |= arguments_to_pass_directly or {}
+
+        if fn_is_async:
+            return await fn(**arguments_parsed_dict)
+        else:
+            return await anyio.to_thread.run_sync(functools.partial(fn, **arguments_parsed_dict))
+
+    FuncMetadata.call_fn_with_arg_validation = _offloaded_call_fn
+    FuncMetadata._helios_offloaded = True
 
 from src.config import (
     LOCKED_SECURITY_KEYS,
@@ -96,7 +130,7 @@ sse_app = mcp.sse_app()
 class HybridMCPHandler:
     """
     Unified MCP ASGI dispatcher supporting both modern Streamable HTTP (POST /sse)
-    and legacy Server-Sent Events (GET /sse).
+    and Server-Sent Events (GET /sse).
     """
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
@@ -123,7 +157,30 @@ class HybridMCPHandler:
                     await mcp.session_manager.handle_request(scope, receive, send)
                     return
 
-        # Fall through to legacy SSE app for GET /sse without active streamable session
+            # For GET /sse (SSE transport): preserve token in emitted endpoint event
+            if method == "GET":
+                raw_qs = scope.get("query_string", b"").decode("utf-8", errors="ignore")
+                qparams = urllib.parse.parse_qs(raw_qs)
+                token_val = qparams.get("token", [None])[0]
+                if token_val:
+                    enc_token = urllib.parse.quote(token_val, safe="").encode("utf-8")
+
+                    async def send_with_token(message):
+                        if message.get("type") == "http.response.body":
+                            body = message.get("body", b"")
+                            if b"/messages/?session_id=" in body:
+                                new_body = re.sub(
+                                    rb"(/messages/\?session_id=[a-fA-F0-9]+)",
+                                    rb"\1&token=" + enc_token,
+                                    body,
+                                )
+                                message = {**message, "body": new_body}
+                        await send(message)
+
+                    await sse_app(scope, receive, send_with_token)
+                    return
+
+        # Fall through to SSE app for GET /sse without active streamable session
         await sse_app(scope, receive, send)
 
 
@@ -154,7 +211,7 @@ COLD_START_ONBOARDING_NOTICE = (
 def recall_memories(
     scope: Annotated[str, Field(default="global", description="Project, repository, or directory name (e.g., 'homelab', 'ticketera', 'global').")] = "global",
     query: Annotated[str, Field(default="", description="Natural language search query or keywords to match via FTS5 BM25.")] = "",
-    category: Annotated[Literal["rule", "fact", "preference", "episodic"] | None, Field(default=None, description="Optional filter to retrieve only a specific category (e.g., 'rule' for coding guardrails).")] = None,
+    category: Annotated[Literal["rule", "fact", "preference", "episodic", ""] | None, Field(default=None, description="Optional filter to retrieve only a specific category (e.g., 'rule' for coding guardrails).")] = None,
     status_filter: Annotated[Literal["all", "active", "stale"], Field(default="all", description="Filter by drift status: 'all' (default), 'active' only, or 'stale' only (to audit drifted memories).")] = "all",
     limit: Annotated[int, Field(default=8, ge=1, le=50, description="Maximum number of memories to return (clamped between 1 and 50).")] = 8,
     include_global: Annotated[bool, Field(default=True, description="Whether to include global guardrails and rules alongside scope-specific memories.")] = True,
@@ -163,12 +220,13 @@ def recall_memories(
     Recall active memories from Helios using FTS5 BM25 search.
     """
     try:
+        cat_filter = None if (category is None or category == "") else category
         memories = query_memories(
             raw_scope=scope,
             query=query,
             include_global=include_global,
             limit=limit,
-            category=category,
+            category=cat_filter,
             status_filter=status_filter,
         )
         if not memories:
@@ -632,6 +690,20 @@ def is_request_authenticated(request: Request) -> bool:
     if query_token and hmac.compare_digest(query_token.encode("utf-8"), api_key.encode("utf-8")):
         return True
 
+    # Validate active authenticated SSE session on POST to /messages
+    if request.method == "POST" and request.url.path.rstrip("/").endswith("/messages"):
+        raw_sid = request.query_params.get("session_id", "").strip()
+        if raw_sid:
+            try:
+                sid = uuid.UUID(hex=raw_sid)
+                for route in getattr(sse_app, "routes", []):
+                    transport = getattr(getattr(route, "app", None), "__self__", None)
+                    writers = getattr(transport, "_read_stream_writers", None)
+                    if isinstance(writers, dict) and sid in writers:
+                        return True
+            except Exception:
+                pass
+
     return False
 
 
@@ -888,13 +960,36 @@ def _process_webhook_drift(repo_name: str, changed_files: list[str], commit_sha:
     return flagged_count
 
 
+MAX_WEBHOOK_BYTES = 1_048_576
+
+
+async def _read_bounded_body(request: Request, max_bytes: int = MAX_WEBHOOK_BYTES) -> bytes | None:
+    """Read incoming request body with strict size limit enforcement."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                return None
+        except ValueError:
+            pass
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def git_webhook(request: Request) -> JSONResponse:
     """
     Universal Git Webhook Adapter (`POST /webhook/git` & `POST /webhook/forgejo`).
     Supports GitHub, Forgejo/Gitea, and GitLab push events.
     """
-    raw_body = await request.body()
-    if len(raw_body) > 1_048_576:
+    raw_body = await _read_bounded_body(request, max_bytes=MAX_WEBHOOK_BYTES)
+    if raw_body is None:
         return JSONResponse(
             {"status": "error", "message": "Payload exceeds 1MB limit."},
             status_code=413,

@@ -17,6 +17,7 @@ from src.config import (
     get_git_token,
     get_webhook_secret,
     get_webhook_url,
+    resolve_setting_with_source,
 )
 from src.db import get_connection, list_aliases, resolve_scope
 
@@ -204,6 +205,30 @@ def fetch_candidate_repositories(
     return repos
 
 
+def _verify_token_destination_allowed(target_api_url: str, explicit_token: str | None = None) -> None:
+    """Refuse to send environment-sourced secrets to an untrusted runtime DB URL override."""
+    if explicit_token is not None:
+        return
+    try:
+        _, token_source = resolve_setting_with_source("HELIOS_GIT_TOKEN")
+        _, url_source = resolve_setting_with_source("HELIOS_GIT_API_URL")
+    except KeyError:
+        return
+
+    if token_source == "env" and url_source == "db":
+        env_url = (os.getenv("HELIOS_GIT_API_URL") or "").strip().rstrip("/")
+        if not env_url:
+            raise ValueError(
+                f"Security violation: HELIOS_GIT_TOKEN is configured in environment, but HELIOS_GIT_API_URL is only set in runtime DB ('{target_api_url}'). Refusing to send environment token."
+            )
+        p_env = urllib.parse.urlsplit(env_url)
+        p_target = urllib.parse.urlsplit(target_api_url)
+        if (p_env.scheme.lower(), p_env.netloc.lower()) != (p_target.scheme.lower(), p_target.netloc.lower()):
+            raise ValueError(
+                f"Security violation: HELIOS_GIT_TOKEN is configured in environment for '{p_env.netloc}', refusing to send it to runtime DB override '{p_target.netloc}'."
+            )
+
+
 def get_repo_hooks(
     client: httpx.Client,
     provider: str,
@@ -218,7 +243,9 @@ def get_repo_hooks(
         encoded = urllib.parse.quote(full_name, safe="")
         endpoint = f"{api_url}/projects/{encoded}/hooks"
     else:
-        endpoint = f"{api_url}/repos/{owner}/{repo_name}/hooks"
+        enc_owner = urllib.parse.quote(owner, safe="")
+        enc_name = urllib.parse.quote(repo_name, safe="")
+        endpoint = f"{api_url}/repos/{enc_owner}/{enc_name}/hooks"
 
     res = client.get(endpoint)
     if res.status_code == 200:
@@ -255,6 +282,8 @@ def list_repo_webhooks(
     auth_token = token or get_git_token()
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
+
+    _verify_token_destination_allowed(base_url, explicit_token=token)
 
     target_url = (webhook_url or get_webhook_url()).strip()
     headers = get_headers(prov, auth_token)
@@ -304,6 +333,8 @@ def enable_repo_webhooks(
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
 
+    _verify_token_destination_allowed(base_url, explicit_token=token)
+
     target_url = (webhook_url or get_webhook_url()).strip()
     if not target_url:
         raise ValueError("HELIOS_WEBHOOK_URL is required to enable webhooks.")
@@ -316,12 +347,15 @@ def enable_repo_webhooks(
     failed: list[dict[str, str]] = []
 
     with httpx.Client(headers=headers, timeout=15.0) as client:
+        default_owner = None
         for repo_identifier in repos:
             clean_repo = repo_identifier.strip()
             if "/" in clean_repo:
                 owner, name = clean_repo.split("/", 1)
             else:
-                owner, name = get_git_owner(), clean_repo
+                if default_owner is None:
+                    default_owner = (get_git_owner() or _get_authenticated_user(client, prov, base_url)).strip()
+                owner, name = default_owner, clean_repo
 
             try:
                 hooks = get_repo_hooks(client, prov, base_url, owner, name, clean_repo)
@@ -341,7 +375,9 @@ def enable_repo_webhooks(
                         "enable_ssl_verification": True,
                     }
                 elif prov == "github":
-                    endpoint = f"{base_url}/repos/{owner}/{name}/hooks"
+                    enc_owner = urllib.parse.quote(owner, safe="")
+                    enc_name = urllib.parse.quote(name, safe="")
+                    endpoint = f"{base_url}/repos/{enc_owner}/{enc_name}/hooks"
                     payload = {
                         "name": "web",
                         "active": True,
@@ -354,7 +390,9 @@ def enable_repo_webhooks(
                         },
                     }
                 else:  # forgejo, gitea
-                    endpoint = f"{base_url}/repos/{owner}/{name}/hooks"
+                    enc_owner = urllib.parse.quote(owner, safe="")
+                    enc_name = urllib.parse.quote(name, safe="")
+                    endpoint = f"{base_url}/repos/{enc_owner}/{enc_name}/hooks"
                     payload = {
                         "type": "gitea",
                         "config": {
@@ -370,7 +408,7 @@ def enable_repo_webhooks(
                 if res.status_code in (200, 201):
                     enabled.append(clean_repo)
                 else:
-                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text}"})
+                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text[:200]}"})
             except Exception as exc:
                 failed.append({"repo": clean_repo, "error": str(exc)})
 
@@ -400,6 +438,8 @@ def disable_repo_webhooks(
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
 
+    _verify_token_destination_allowed(base_url, explicit_token=token)
+
     target_url = (webhook_url or get_webhook_url()).strip()
     if not target_url:
         raise ValueError("HELIOS_WEBHOOK_URL is required to identify webhooks.")
@@ -411,12 +451,15 @@ def disable_repo_webhooks(
     failed: list[dict[str, str]] = []
 
     with httpx.Client(headers=headers, timeout=15.0) as client:
+        default_owner = None
         for repo_identifier in repos:
             clean_repo = repo_identifier.strip()
             if "/" in clean_repo:
                 owner, name = clean_repo.split("/", 1)
             else:
-                owner, name = get_git_owner(), clean_repo
+                if default_owner is None:
+                    default_owner = (get_git_owner() or _get_authenticated_user(client, prov, base_url)).strip()
+                owner, name = default_owner, clean_repo
 
             try:
                 hooks = get_repo_hooks(client, prov, base_url, owner, name, clean_repo)
@@ -430,13 +473,15 @@ def disable_repo_webhooks(
                     encoded = urllib.parse.quote(clean_repo, safe="")
                     endpoint = f"{base_url}/projects/{encoded}/hooks/{hook_id}"
                 else:
-                    endpoint = f"{base_url}/repos/{owner}/{name}/hooks/{hook_id}"
+                    enc_owner = urllib.parse.quote(owner, safe="")
+                    enc_name = urllib.parse.quote(name, safe="")
+                    endpoint = f"{base_url}/repos/{enc_owner}/{enc_name}/hooks/{hook_id}"
 
                 res = client.delete(endpoint)
                 if res.status_code in (200, 204):
                     disabled.append(clean_repo)
                 else:
-                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text}"})
+                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text[:200]}"})
             except Exception as exc:
                 failed.append({"repo": clean_repo, "error": str(exc)})
 

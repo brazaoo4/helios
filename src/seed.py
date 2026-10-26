@@ -59,7 +59,7 @@ INITIAL_FACTS = [
         "scope": "helios",
         "category": "fact",
         "subject": "mcp-transport",
-        "content": "Helios MCP exposes Streamable HTTP on /sse and /mcp, with legacy SSE fallback for older clients.",
+        "content": "Helios MCP exposes Streamable HTTP on /sse and /mcp, with standard SSE support for clients like Claude Desktop.",
         "anchor_files": ["src/server.py"],
     },
     {
@@ -143,9 +143,15 @@ def clear_memories(scope_filter: str | None = None) -> int:
     """
     with get_connection() as conn:
         if scope_filter:
-            target_scope = resolve_scope(scope_filter)
+            target_scope = resolve_scope(scope_filter, conn=conn)
+            # Null out cross-scope FK references to prevent sqlite3.IntegrityError
+            conn.execute(
+                "UPDATE memories SET superseded_by = NULL WHERE superseded_by IN (SELECT id FROM memories WHERE scope = ?)",
+                (target_scope,),
+            )
             cur = conn.execute("DELETE FROM memories WHERE scope = ?", (target_scope,))
         else:
+            conn.execute("UPDATE memories SET superseded_by = NULL")
             cur = conn.execute("DELETE FROM memories")
         return cur.rowcount
 

@@ -7,7 +7,9 @@ and the /remember skill for Antigravity, Cursor, Claude Desktop, and Claude Code
 """
 
 import json
+import re
 import sys
+import urllib.parse
 from typing import Any
 
 from src.config import get_api_key, get_public_url, get_word_limit
@@ -25,10 +27,19 @@ def resolve_server_base_url(headers: dict[str, str] | None = None) -> str:
         return pub.rstrip("/")
 
     if headers:
-        proto = headers.get("x-forwarded-proto") or "http"
-        host = headers.get("x-forwarded-host") or headers.get("host")
-        if host:
-            return f"{proto}://{host}".rstrip("/")
+        norm_headers = {str(k).lower(): str(v) for k, v in headers.items()}
+        raw_proto = norm_headers.get("x-forwarded-proto", "http")
+        proto = raw_proto.split(",")[0].strip().lower()
+        if proto not in ("http", "https"):
+            proto = "http"
+
+        raw_host = norm_headers.get("x-forwarded-host") or norm_headers.get("host") or "localhost:8000"
+        host = raw_host.split(",")[0].strip()
+        host = re.sub(r"""["'`\s;]""", "", host)
+        if not host:
+            host = "localhost:8000"
+
+        return f"{proto}://{host}".rstrip("/")
 
     return "http://localhost:8000"
 
@@ -82,14 +93,18 @@ def get_mcp_config_snippet(
     """Generate the exact JSON configuration block or CLI command for the client."""
     c = client.strip().lower()
     clean_base = base_url.rstrip("/")
-    sse_url = f"{clean_base}/sse"
+    token_suffix = ""
     if token:
-        sse_url = f"{sse_url}?token={token}"
+        clean_tok = token.strip()
+        if clean_tok == "<YOUR_HELIOS_API_KEY>":
+            token_suffix = f"?token={clean_tok}"
+        else:
+            token_suffix = f"?token={urllib.parse.quote(clean_tok, safe='')}"
+
+    sse_url = f"{clean_base}/sse{token_suffix}"
 
     if c == "antigravity":
-        mcp_url = f"{clean_base}/mcp"
-        if token:
-            mcp_url = f"{mcp_url}?token={token}"
+        mcp_url = f"{clean_base}/mcp{token_suffix}"
         return {
             "mcpServers": {
                 "helios": {
@@ -336,6 +351,12 @@ def generate_setup_markdown(
     Designed for AI agents fetching via `curl -fsSL https://<host>/setup`.
     """
     token_param = query_token if query_token else ("<YOUR_HELIOS_API_KEY>" if has_auth else "")
+    token_suffix = ""
+    if query_token and query_token.strip():
+        token_suffix = f"?token={urllib.parse.quote(query_token.strip(), safe='')}"
+    elif has_auth:
+        token_suffix = "?token=<YOUR_HELIOS_API_KEY>"
+
     clean_base = base_url.rstrip("/")
     active_word_limit = get_word_limit()
 
@@ -361,11 +382,11 @@ def generate_setup_markdown(
         "To configure your local environment in 1 second without manual file editing:\n\n"
         "- **Windows (PowerShell)**:\n"
         "  ```powershell\n"
-        f"  irm {clean_base}/setup.ps1 | iex\n"
+        f"  irm {clean_base}/setup.ps1{token_suffix} | iex\n"
         "  ```\n\n"
         "- **Linux / macOS (Bash)**:\n"
         "  ```bash\n"
-        f"  curl -fsSL {clean_base}/setup.sh | bash\n"
+        f"  curl -fsSL {clean_base}/setup.sh{token_suffix} | bash\n"
         "  ```\n\n"
         "---\n\n"
         "## Instructions for the AI Agent (Manual File Configuration):\n"
@@ -425,7 +446,9 @@ def generate_setup_powershell(base_url: str, query_token: str | None = None) -> 
     Handles NTFS symlinks, CRLF line endings, and idempotent marker replacement.
     """
     clean_base = base_url.rstrip("/")
-    token_suffix = f"?token={query_token}" if query_token else ""
+    token_suffix = ""
+    if query_token and query_token.strip():
+        token_suffix = f"?token={urllib.parse.quote(query_token.strip(), safe='')}"
     mcp_url = f"{clean_base}/mcp{token_suffix}"
     active_limit = get_word_limit()
     directive = generate_global_directive("workstation", word_limit=active_limit).strip()
@@ -461,15 +484,15 @@ Write-Host "  [OK] MCP server registered in $mcpConfigPath" -ForegroundColor Gre
 
 # 2. Global Directive (GEMINI.md with CRLF and symlink handling)
 $geminiPath = Join-Path $configDir "GEMINI.md"
-$directiveText = @"
+$directiveText = @'
 {directive}
-"@
+'@
 
 if (Test-Path $geminiPath) {{
     $resolvedPath = (Resolve-Path $geminiPath).Path
     $content = [System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)
     if ($content -match '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->') {{
-        $content = [regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', $directiveText)
+        $content = [regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', {{ param($m) $directiveText }})
     }} else {{
         $content = $directiveText + "`r`n`r`n" + $content
     }}
@@ -483,9 +506,9 @@ Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Gr
 $skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
 if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
 $skillPath = Join-Path $skillDir "SKILL.md"
-$skillText = @"
+$skillText = @'
 {skill}
-"@
+'@
 [System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
 Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
 
@@ -499,7 +522,9 @@ def generate_setup_bash(base_url: str, query_token: str | None = None) -> str:
     Usage: curl -fsSL https://<host>/setup.sh | bash
     """
     clean_base = base_url.rstrip("/")
-    token_suffix = f"?token={query_token}" if query_token else ""
+    token_suffix = ""
+    if query_token and query_token.strip():
+        token_suffix = f"?token={urllib.parse.quote(query_token.strip(), safe='')}"
     mcp_url = f"{clean_base}/mcp{token_suffix}"
     active_limit = get_word_limit()
     directive = generate_global_directive("workstation", word_limit=active_limit).strip()
@@ -514,9 +539,10 @@ CONFIG_DIR="$HOME/.gemini/config"
 mkdir -p "$CONFIG_DIR"
 MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
 
-python3 -c "
+MCP_CONFIG="$MCP_CONFIG" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
 import json, os
-path = '$MCP_CONFIG'
+path = os.environ["MCP_CONFIG"]
+mcp_url = os.environ["MCP_URL"]
 data = {{'mcpServers': {{}}}}
 if os.path.exists(path):
     try:
@@ -526,24 +552,34 @@ if os.path.exists(path):
         pass
 if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
     data['mcpServers'] = {{}}
-data['mcpServers']['helios'] = {{'url': '{mcp_url}'}}
+data['mcpServers']['helios'] = {{'url': mcp_url}}
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
-"
+PYEOF
 echo "  [OK] MCP server registered in $MCP_CONFIG"
 
 # Global Directive
 GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
-python3 -c "
-import re, os
-path = '$GEMINI_PATH'
-directive = '''{directive}'''
+DIRECTIVE_CONTENT="$(cat <<'HELIOS_DIRECTIVE_EOF'
+{directive}
+HELIOS_DIRECTIVE_EOF
+)"
+
+GEMINI_PATH="$GEMINI_PATH" DIRECTIVE="$DIRECTIVE_CONTENT" python3 - <<'PYEOF'
+import os, re
+path = os.environ["GEMINI_PATH"]
+directive = os.environ["DIRECTIVE"]
 if os.path.exists(path):
     real_path = os.path.realpath(path)
     with open(real_path, 'r', encoding='utf-8') as f:
         content = f.read()
     if re.search(r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', content, flags=re.DOTALL):
-        new_content = re.sub(r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', directive, content, flags=re.DOTALL)
+        new_content = re.sub(
+            r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->',
+            lambda _: directive,
+            content,
+            flags=re.DOTALL,
+        )
     else:
         new_content = directive + '\\n\\n' + content
     with open(real_path, 'w', encoding='utf-8') as f:
@@ -551,15 +587,15 @@ if os.path.exists(path):
 else:
     with open(path, 'w', encoding='utf-8') as f:
         f.write(directive)
-"
+PYEOF
 echo "  [OK] Global directive embedded in $GEMINI_PATH"
 
 # /remember Skill
 SKILL_DIR="$HOME/.gemini/skills/remember"
 mkdir -p "$SKILL_DIR"
-cat <<'EOF' > "$SKILL_DIR/SKILL.md"
+cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
 {skill}
-EOF
+HELIOS_SKILL_EOF
 echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
 
 echo ""

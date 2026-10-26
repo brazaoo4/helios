@@ -131,7 +131,7 @@ def init_db() -> None:
 
 def get_runtime_setting(key: str) -> str | None:
     """Fetch a runtime setting from the database, returning None if not found or table uninitialized."""
-    if not key or not key.strip():
+    if not key or not key.strip() or not get_db_path().exists():
         return None
     try:
         with get_connection() as conn:
@@ -192,7 +192,7 @@ def get_scope_statistics() -> list[dict[str, Any]]:
     [{"scope": ..., "active_count": int, "stale_count": int, "aliases": [...]}, ...]
     """
     with get_connection() as conn:
-        aliases = list_aliases()
+        aliases = list_aliases(conn=conn)
         aliases_by_canonical: dict[str, list[str]] = {}
         for alias, canonical in aliases.items():
             aliases_by_canonical.setdefault(canonical, []).append(alias)
@@ -231,6 +231,16 @@ def _normalize_alias_key(raw_alias: str) -> str:
     return folder_name
 
 
+def _normalize_repo_path(path: str) -> str:
+    """Normalize a repo-relative file path, stripping backslashes and redundant prefixes."""
+    if not path or not path.strip():
+        return ""
+    p = path.strip().replace("\\", "/").strip("/")
+    while p.startswith("./"):
+        p = p[2:].strip("/")
+    return p
+
+
 def set_alias(alias: str, canonical_scope: str) -> None:
     """
     Create or update an alias mapping to a canonical memory scope.
@@ -241,9 +251,22 @@ def set_alias(alias: str, canonical_scope: str) -> None:
         raise ValueError("Alias cannot be empty.")
     if not clean_scope:
         raise ValueError("Canonical scope cannot be empty.")
+    if clean_alias == "global":
+        raise ValueError("Cannot alias or migrate the reserved 'global' scope.")
+    if clean_alias == clean_scope:
+        raise ValueError("Alias and canonical_scope cannot be identical.")
 
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
+
+        # Flatten: if clean_scope is already an alias, resolve to its canonical target
+        target_row = conn.execute(
+            "SELECT canonical_scope FROM scope_aliases WHERE alias = ?",
+            (clean_scope,),
+        ).fetchone()
+        if target_row:
+            clean_scope = target_row["canonical_scope"]
+
         conn.execute(
             """
             INSERT INTO scope_aliases (alias, canonical_scope)
@@ -251,6 +274,12 @@ def set_alias(alias: str, canonical_scope: str) -> None:
             ON CONFLICT(alias) DO UPDATE SET canonical_scope = excluded.canonical_scope
             """,
             (clean_alias, clean_scope),
+        )
+
+        # Repoint any existing aliases targeting clean_alias to clean_scope
+        conn.execute(
+            "UPDATE scope_aliases SET canonical_scope = ? WHERE canonical_scope = ? AND alias != ?",
+            (clean_scope, clean_alias, clean_scope),
         )
 
 
@@ -272,18 +301,30 @@ def remove_alias(alias: str) -> bool:
         return cur.rowcount > 0
 
 
-def list_aliases() -> dict[str, str]:
+def list_aliases(conn: sqlite3.Connection | None = None) -> dict[str, str]:
     """
     Return all current alias-to-canonical_scope mappings ordered by alias.
     """
-    with get_connection() as conn:
+    if conn is not None:
         rows = conn.execute(
             "SELECT alias, canonical_scope FROM scope_aliases ORDER BY alias"
         ).fetchall()
         return {r["alias"]: r["canonical_scope"] for r in rows}
 
+    if not get_db_path().exists():
+        return {}
 
-def resolve_scope(raw_scope: str) -> str:
+    try:
+        with get_connection() as c:
+            rows = c.execute(
+                "SELECT alias, canonical_scope FROM scope_aliases ORDER BY alias"
+            ).fetchall()
+            return {r["alias"]: r["canonical_scope"] for r in rows}
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        return {}
+
+
+def resolve_scope(raw_scope: str, conn: sqlite3.Connection | None = None) -> str:
     """
     Normalize raw directory paths, git repos, or aliases into a clean scope name.
     Queries scope_aliases dynamically, falling back to normalized directory/repo names.
@@ -295,17 +336,30 @@ def resolve_scope(raw_scope: str) -> str:
     if not folder_name:
         return "global"
 
+    if conn is not None:
+        try:
+            row = conn.execute(
+                "SELECT canonical_scope FROM scope_aliases WHERE alias = ?",
+                (folder_name,),
+            ).fetchone()
+            return row["canonical_scope"] if row else folder_name
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            return folder_name
+
+    if not get_db_path().exists():
+        return folder_name
+
     # Check if we have an alias in SQLite
     try:
-        with get_connection() as conn:
-            row = conn.execute(
+        with get_connection() as c:
+            row = c.execute(
                 "SELECT canonical_scope FROM scope_aliases WHERE alias = ?",
                 (folder_name,),
             ).fetchone()
 
             # If found in table, return canonical name; otherwise keep the folder name
             return row["canonical_scope"] if row else folder_name
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
         return folder_name
 
 
@@ -326,6 +380,8 @@ def migrate_scope(from_scope: str, to_scope: str, register_alias: bool = True) -
         raise ValueError("Source scope cannot be empty.")
     if not to_clean:
         raise ValueError("Target scope cannot be empty.")
+    if from_clean == "global":
+        raise ValueError("Cannot alias or migrate the reserved 'global' scope.")
     if from_clean == to_clean:
         raise ValueError("Source and target scopes cannot be identical.")
 
@@ -401,12 +457,22 @@ def prune_expired_episodic() -> int:
     Leaves rules, facts, preferences, and recent episodic memories untouched.
     Returns the count of archived rows.
     """
+    if not get_db_path().exists():
+        return 0
+
     ttl_days = get_episodic_ttl_days()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    ts = now_iso()
 
     with get_connection() as conn:
+        has_expired = conn.execute(
+            "SELECT 1 FROM memories WHERE category = 'episodic' AND last_accessed < ? AND status IN ('active', 'stale') LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+        if not has_expired:
+            return 0
+
         conn.execute("BEGIN IMMEDIATE")
+        ts = now_iso()
         cur = conn.execute(
             """
             UPDATE memories
@@ -415,7 +481,7 @@ def prune_expired_episodic() -> int:
                 AND last_accessed < ?
                 AND status IN ('active', 'stale')
             """,
-            (ts, cutoff)
+            (ts, cutoff),
         )
         return cur.rowcount
 
@@ -448,18 +514,23 @@ def upsert_memory(
     word_limit = get_word_limit()
     word_count = len(content_clean.split())
     if word_count > word_limit:
-        raise ValueError(f"Content exceeds {word_limit}-word limit ({word_count} words). Keep facts atomic.")
+        raise ValueError(
+            f"Content exceeds {word_limit}-word limit ({word_count} words; remove at least {word_count - word_limit} words). Keep facts atomic."
+        )
 
-    scope = resolve_scope(raw_scope)
     subject_clean = subject.strip().lower()
-    anchors_json = json.dumps(anchor_files or [])
+    normalized_anchors = list(
+        dict.fromkeys(_normalize_repo_path(a) for a in (anchor_files or []) if _normalize_repo_path(a))
+    )
+    anchors_json = json.dumps(normalized_anchors)
     ts = now_iso()
 
     with get_connection() as conn:
         # BEGIN IMMEDIATE acquires a write lock up-front to prevent concurrent writer collisions
         conn.execute("BEGIN IMMEDIATE")
+        scope = resolve_scope(raw_scope, conn=conn)
 
-        # 1. Exact Duplicate Check (No-op)
+        # 1. Exact Duplicate Check (No-op or superseded if replaces_id passed)
         existing = conn.execute(
             """
             SELECT id FROM memories
@@ -469,15 +540,40 @@ def upsert_memory(
         ).fetchone()
 
         if existing:
+            superseded_ids = []
+            if replaces_id is not None and replaces_id != existing["id"]:
+                old_rec = conn.execute(
+                    "SELECT id, scope FROM memories WHERE id = ? AND valid_to IS NULL",
+                    (replaces_id,),
+                ).fetchone()
+                if not old_rec:
+                    raise ValueError(f"replaces_id {replaces_id} does not exist or is already superseded.")
+                if resolve_scope(old_rec["scope"], conn=conn) != scope:
+                    raise ValueError(
+                        f"Cannot supersede memory across different scopes ('{old_rec['scope']}' -> '{scope}')."
+                    )
+                conn.execute(
+                    "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
+                    (ts, existing["id"], replaces_id),
+                )
+                superseded_ids.append(replaces_id)
+
+            update_fields = ["status = 'active'", "stale_reason = ''", "last_accessed = ?"]
+            params: list[Any] = [ts]
+            if anchor_files is not None:
+                update_fields.append("anchor_files = ?")
+                params.append(anchors_json)
+            params.append(existing["id"])
             conn.execute(
-                "UPDATE memories SET status = 'active', stale_reason = '', last_accessed = ? WHERE id = ?",
-                (ts, existing["id"]),
+                f"UPDATE memories SET {', '.join(update_fields)} WHERE id = ?",
+                tuple(params),
             )
+            action = "superseded" if superseded_ids else "no-op (verified existing)"
             return {
-                "action": "no-op (verified existing)",
+                "action": action,
                 "id": existing["id"],
                 "scope": scope,
-                "superseded_ids": [],
+                "superseded_ids": superseded_ids,
             }
 
         # 2. Validate explicit replaces_id (if supplied)
@@ -488,7 +584,7 @@ def upsert_memory(
             ).fetchone()
             if not old_rec:
                 raise ValueError(f"replaces_id {replaces_id} does not exist or is already superseded.")
-            if resolve_scope(old_rec["scope"]) != scope:
+            if resolve_scope(old_rec["scope"], conn=conn) != scope:
                 raise ValueError(
                     f"Cannot supersede memory across different scopes ('{old_rec['scope']}' -> '{scope}')."
                 )
@@ -553,16 +649,11 @@ def query_memories(
     - Clamps limit between 1 and 50.
     - Supports optional category filter ('rule', 'fact', 'preference', 'episodic').
     - Supports status_filter ('all' -> active & stale, 'active' -> active only, 'stale' -> stale only).
-    - Increments hit_count and updates last_accessed for returned rows.
+    - Increments hit_count and updates last_accessed for returned rows (except for administrative 'stale' audits).
     """
     prune_expired_episodic()
-    scope = resolve_scope(raw_scope)
-    scopes = [scope]
-    if include_global and scope != "global":
-        scopes.append("global")
 
     limit = max(1, min(limit, 50))
-    placeholders = ",".join("?" for _ in scopes)
     ts = now_iso()
 
     norm_status = (status_filter or "all").strip().lower()
@@ -582,10 +673,16 @@ def query_memories(
     cat_params = [cat_clean] if cat_clean else []
 
     with get_connection() as conn:
+        scope = resolve_scope(raw_scope, conn=conn)
+        scopes = [scope]
+        if include_global and scope != "global":
+            scopes.append("global")
+        placeholders = ",".join("?" for _ in scopes)
+
         if query.strip():
-            # 1. Extract valid words/numbers/tokens, preserving technical punctuation (dots, colons)
+            # 1. Extract valid words/numbers/tokens, preserving technical punctuation (dots, colons, hyphens)
             clean_query = query.replace('"', ' ').replace('\x00', ' ')
-            raw_tokens = re.findall(r"[a-zA-Z0-9_.:-]+", clean_query)
+            raw_tokens = re.findall(r"[\w.:-]+", clean_query, flags=re.UNICODE)
             clean_tokens = []
             for tok in raw_tokens:
                 t = tok.strip("-_.:*")
@@ -595,10 +692,13 @@ def query_memories(
                     continue
                 clean_tokens.append(t)
 
-            # If multiple tokens exist (e.g. split IP), drop 1-digit pure numbers
-            # like "1" so they don't prefix-match every number starting with 1 (100G, 1000, etc.)
+            # If multiple tokens exist, drop 1-char tokens and common stopwords
             if len(clean_tokens) > 1:
-                filtered = [t for t in clean_tokens if not (t.isdigit() and len(t) == 1)]
+                stopwords = {"the", "is", "in", "to", "of", "for", "on", "with", "at", "by", "an", "be", "as"}
+                filtered = [
+                    t for t in clean_tokens
+                    if len(t) > 1 and t.lower() not in stopwords
+                ]
                 if filtered:
                     clean_tokens = filtered
 
@@ -656,8 +756,8 @@ def query_memories(
 
         results = [dict(r) for r in rows]
 
-        # 3. Bump hit_count and refresh last_accessed for returned results
-        if results:
+        # 3. Bump hit_count and refresh last_accessed for returned results (skip for administrative 'stale' audits)
+        if results and norm_status != "stale":
             ids = [r["id"] for r in results]
             id_str = ",".join("?" for _ in ids)
             conn.execute(
@@ -678,14 +778,14 @@ def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: s
     if not modified_files:
         return 0
 
-    scope = resolve_scope(repo_name)
-    short_sha = commit_sha[:7] if commit_sha else "latest"
+    short_sha = re.sub(r"[^a-zA-Z0-9._-]", "", commit_sha or "")[:7] or "latest"
+    norm_modified = [_normalize_repo_path(f) for f in modified_files if _normalize_repo_path(f)]
+    if not norm_modified:
+        return 0
 
-    # Normalize commit file paths: replace backslashes and strip leading/trailing slashes
-    norm_modified = [f.replace("\\", "/").strip("/") for f in modified_files if f.strip()]
     flagged_count = 0
-
     with get_connection() as conn:
+        scope = resolve_scope(repo_name, conn=conn)
         conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
@@ -696,8 +796,11 @@ def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: s
         ).fetchall()
 
         for row in rows:
-            raw_anchors = json.loads(row["anchor_files"] or "[]")
-            norm_anchors = [a.replace("\\", "/").strip("/") for a in raw_anchors if a.strip()]
+            try:
+                raw_anchors = json.loads(row["anchor_files"] or "[]")
+            except Exception:
+                raw_anchors = []
+            norm_anchors = [_normalize_repo_path(a) for a in raw_anchors if _normalize_repo_path(a)]
 
             matched_file = None
             for mod_file in norm_modified:
@@ -710,7 +813,8 @@ def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: s
                     break
 
             if matched_file:
-                reason = f"{matched_file} modified in commit {short_sha}"
+                clean_matched = re.sub(r"[^a-zA-Z0-9_./-]", "", matched_file)[:120]
+                reason = f"{clean_matched} modified in commit {short_sha}"
                 conn.execute(
                     "UPDATE memories SET status = 'stale', stale_reason = ? WHERE id = ?",
                     (reason, row["id"]),

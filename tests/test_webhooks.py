@@ -226,3 +226,58 @@ def test_manage_git_webhooks_mcp_tool_actions(monkeypatch):
         # 4. Action: disable with repos
         dis_out = manage_git_webhooks(action="disable", repos=["braz/helios"])
         assert "Successfully disabled drift webhooks on: `braz/helios`" in dis_out
+
+
+def test_cross_source_token_exfiltration_prevented(monkeypatch):
+    from src.db import set_runtime_setting
+    from src.webhooks import _verify_token_destination_allowed
+
+    # Env provides GIT token
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "super-secret-production-pat")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://git.internal.lan")
+
+    # If target matches env origin, it is allowed (returns None without raising)
+    _verify_token_destination_allowed("https://git.internal.lan")
+
+    # But if someone overrides HELIOS_GIT_API_URL in SQLite to an external attacker endpoint:
+    set_runtime_setting("HELIOS_GIT_API_URL", "https://attacker.com/api")
+
+    with pytest.raises(ValueError, match="Security violation: HELIOS_GIT_TOKEN is configured in environment"):
+        _verify_token_destination_allowed("https://attacker.com/api")
+
+
+def test_enable_repo_webhooks_single_name_fallback_and_url_encoding(monkeypatch):
+    from src.webhooks import enable_repo_webhooks
+
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "forgejo")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://git.internal.lan")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "fj-token-xyz")
+    monkeypatch.setenv("HELIOS_GIT_OWNER", "braz")
+    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "https://helios.example.com/webhook/git")
+
+    called_urls = []
+
+    def mock_get(self, url, **kwargs):
+        called_urls.append(url)
+        class MockResp:
+            status_code = 200
+            text = "[]"
+            def json(self):
+                return []
+        return MockResp()
+
+    def mock_post(self, url, **kwargs):
+        called_urls.append(url)
+        class MockResp:
+            status_code = 201
+            text = '{"id": 42}'
+            def json(self):
+                return {"id": 42}
+        return MockResp()
+
+    with patch("httpx.Client.get", new=mock_get), patch("httpx.Client.post", new=mock_post):
+        # Pass a single-name repo with special characters (e.g. "my repo+v1")
+        res = enable_repo_webhooks(repos=["my repo+v1"])
+        assert "my repo+v1" in res["enabled"]
+        # Ensure owner "braz" was prepended and repo name was URL-encoded in the API path
+        assert any("/repos/braz/my%20repo%2Bv1/hooks" in u for u in called_urls)
