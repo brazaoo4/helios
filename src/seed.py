@@ -43,7 +43,7 @@ INITIAL_FACTS = [
         "scope": "global",
         "category": "rule",
         "subject": "token-diet",
-        "content": "Keep terminal command outputs concise; always use tail, silent flags, and grep.",
+        "content": "Suppress terminal noise with quiet flags and short tracebacks (pytest -q --tb=short, docker build -q, tail, git status -s).",
         "anchor_files": [],
     },
     {

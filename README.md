@@ -232,7 +232,8 @@ You are connected to Helios, a centralized token-budgeted memory engine.
 2. Stale Protocol: When a memory is marked `[STALE]`, inspect `anchor_files` before relying on it.
 3. Write-Through DoD: Any change to ports, stacks, dependencies, or bug fixes is INCOMPLETE until `save_memory()` is called.
 4. Token Diet: Keep facts atomic (<= 25 words).
-5. Distillation Audit: Run `/remember` before clearing context or after major milestones.
+5. Terminal Noise Suppression: Use quiet flags (`pytest -q --tb=short`, `docker build -q`, `git status -s`).
+6. Distillation Audit: Run `/remember` before clearing context or after major milestones.
 <!-- HELIOS:END -->
 ```
 

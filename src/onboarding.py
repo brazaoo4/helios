@@ -166,8 +166,9 @@ def generate_global_directive(
             f"4. **AUDN Write Gate & Token Diet**:\n"
             f"   - Facts MUST be atomic and **<= {limit} words**. Omit filler words.\n"
             "   - Category must be one of: `'rule'` (guardrails), `'fact'` (architecture/ports), `'preference'` (style), `'episodic'` (temporary 14d notes).\n"
-            "5. **Terminal Token Diet (Headless Host)**:\n"
-            "   - Never run unbounded logs. Always use `docker logs --tail=50`, `journalctl -n 40 --no-pager`, and `git status -s`.\n"
+            "5. **Terminal Token Diet & Noise Suppression (Headless Host)**:\n"
+            "   - Never run unbounded logs or verbose test runners. Always use `docker logs --tail=50`, `journalctl -n 40 --no-pager`, and `git status -s`.\n"
+            "   - For tests & builds: Always use quiet flags and short tracebacks (`pytest -q --tb=short --maxfail=2`, `npm test -- --silent`, `cargo test -- -q`, `docker build -q`, `pip install -q`).\n"
             "   - Generate targeted unified diffs or minimal block replacements rather than entire redundant files.\n"
             "6. **Write-Through Memory Capture (Definition of Done)**:\n"
             "   - Any infrastructure change, docker stack deployment, port allocation, repo movement, CI/CD setup, or non-obvious operational bug fix is **STRICTLY INCOMPLETE** until persisted to Helios via `save_memory()`.\n"
@@ -187,7 +188,10 @@ def generate_global_directive(
             "   - If updated: call `save_memory(scope=..., category='fact', content=..., subject='...')`.\n"
             "3. **Write-Through Memory Capture (Definition of Done)**: When adding dependencies, changing ports, establishing conventions, modifying schemas, or fixing non-obvious bugs, persist them immediately with `save_memory()`. A task is incomplete until its architectural delta is recorded.\n"
             f"4. **AUDN Write Gate**: Keep facts atomic and **<= {limit} words**. Omit conversational filler. Never store API secrets or bulky code dumps.\n"
-            "5. **Periodic Distillation Audit**: Call the `/remember` skill or audit memories before clearing context or after major milestones to clean up obsolete entries."
+            "5. **Terminal Token Diet & Noise Suppression**:\n"
+            "   - For tests: Always use quiet flags and short tracebacks (`pytest -q --tb=short --maxfail=2`, `npm test -- --silent`, `cargo test -- -q`). If all tests pass, report only the 1-line summary.\n"
+            "   - For builds & git: Use quiet flags (`docker build -q`, `npm i --silent --no-audit`, `pip install -q`, `git status -s`) and output targeted unified diffs or minimal block replacements rather than entire redundant files.\n"
+            "6. **Periodic Distillation Audit**: Call the `/remember` skill or audit memories before clearing context or after major milestones to clean up obsolete entries."
         )
 
     return f"<!-- HELIOS:START -->\n{body}\n<!-- HELIOS:END -->"
