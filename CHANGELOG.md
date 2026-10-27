@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.5.0](https://github.com/brazaoo4/helios/compare/v1.4.0...v1.5.0) (2026-10-27)
+
+
+### Features
+
+* **onboarding:** add terminal token diet and noise suppression directives ([0cc82cf](https://github.com/brazaoo4/helios/commit/0cc82cff38bc95d9bb28b0f780d1db8c7b2ec418))
+
+
 ## [1.4.0](https://github.com/brazaoo4/helios/compare/v1.3.0...v1.4.0) (2026-10-27)
 
 
