@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.1](https://github.com/brazaoo4/helios/compare/v1.7.0...v1.7.1) (2026-10-28)
+
+
+### Documentation
+
+* add social preview banner and embed in README ([209acbe](https://github.com/brazaoo4/helios/commit/209acbe002ccbc41a9a9a99b8d0dc5cbbde56593))
+* reframe README intro with personal project narrative ([4e15926](https://github.com/brazaoo4/helios/commit/4e15926834bc62c553bfec26165bc92e5cc5de3a))
+
 ## [1.7.0](https://github.com/brazaoo4/helios/compare/v1.6.0...v1.7.0) (2026-10-28)
 
 
