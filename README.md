@@ -2,7 +2,7 @@
 
 # ☀️ Helios
 
-**The Token-Budgeted, Drift-Aware MCP Memory Engine for AI Coding Agents**
+**A token-budgeted, drift-aware MCP memory engine for AI coding agents.**
 
 [![CI/CD](https://github.com/brazaoo4/helios/actions/workflows/pipeline.yml/badge.svg)](https://github.com/brazaoo4/helios/actions/workflows/pipeline.yml)
 [![GHCR Container](https://img.shields.io/badge/Container-GHCR-181717?logo=github)](https://github.com/brazaoo4/helios/pkgs/container/helios)
@@ -11,7 +11,7 @@
 [![Storage](https://img.shields.io/badge/SQLite-WAL%20%2B%20FTS5%20BM25-informational.svg)](https://www.sqlite.org/fts5.html)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-*Stop repeating architectural context across sessions. Stop agents from acting on outdated documentation.*
+*Built for personal use across homelab services and multiple workstations. Open-sourced if you find it helpful.*
 
 [Why Helios?](#-why-helios) • [Quick Start](#-1-quick-start-server-deployment) • [1-Liner Client Setup](#-2-client-installation-for-ai-agents) • [How Drift Detection Works](#-3-how-git-drift-detection-works) • [Architecture](#%EF%B8%8F-4-system-architecture) • [MCP Tools](#%EF%B8%8F-5-mcp-tools-reference)
 
@@ -19,9 +19,13 @@
 
 ---
 
+> I built Helios because I was tired of my AI coding agents bloating their context windows with repetitive prompt files and trusting outdated architecture configs after someone pushed code. It runs quietly in my homelab across laptops, headless CLI boxes, and different IDEs—and here it is if you want to use it.
+
 ## 💡 Why Helios?
 
-AI coding agents suffer from two fundamental failure modes: **amnesia** (forgetting ports, conventions, and architecture between sessions) and **knowledge drift** (trusting outdated facts after code and configuration files change).
+AI coding agents usually suffer from two major pain points: **amnesia** (forgetting ports, conventions, and architecture choices between sessions) and **knowledge drift** (relying on stale documentation or outdated configs). Most memory tools either inject giant text dumps into every turn or rely on heavy vector databases that don't know when a `git push` invalidated a fact.
+
+Helios solves this with a lightweight, token-budgeted approach:
 
 | Approach | Token Overhead | Handles Contradictions? | Detects Code/Config Drift? | Cross-IDE / Multi-Host? |
 | :--- | :--- | :--- | :--- | :--- |
