@@ -77,3 +77,34 @@ def test_guard_script_suppressed_when_memory_saved(tmp_path):
     )
     data = json.loads(proc.stdout)
     assert data == {"injectSteps": []}
+
+
+def test_guard_script_ignores_client_config_and_directive_files(tmp_path):
+    transcript = tmp_path / "transcript.jsonl"
+    steps = [
+        {
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [
+                {"name": "edit_file", "args": {"Path": "/home/user/.gemini/config/GEMINI.md"}},
+                {"name": "write_file", "args": {"Path": "/home/user/.codex/AGENTS.md"}},
+                {"name": "edit_file", "args": {"Path": "/home/user/.cursor/mcp.json"}},
+                {"name": "edit_file", "args": {"Path": "/home/user/.config/opencode/opencode.json"}},
+                {"name": "write_file", "args": {"Path": f"{tmp_path}/implementation_plan.md"}},
+            ],
+        }
+    ]
+    transcript.write_text("\n".join(json.dumps(s) for s in steps) + "\n")
+
+    payload = json.dumps({"transcriptPath": str(transcript), "artifactDirectoryPath": str(tmp_path)})
+    proc = subprocess.run(
+        [sys.executable, str(GUARD_SCRIPT)],
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    data = json.loads(proc.stdout)
+    assert data == {"injectSteps": []}
+

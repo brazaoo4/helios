@@ -1,12 +1,14 @@
 import pytest
 from starlette.testclient import TestClient
 
+from src import __version__
 from src.onboarding import (
     generate_global_directive,
     generate_remember_skill,
     generate_setup_bash,
     generate_setup_markdown,
     generate_setup_powershell,
+    get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
     normalize_os_platform,
@@ -57,6 +59,26 @@ def test_mcp_config_paths_and_snippets():
     assert get_mcp_config_path("claude-desktop", "macos") == "~/Library/Application Support/Claude/claude_desktop_config.json"
     assert get_mcp_config_path("claude-desktop", "windows") == r"%APPDATA%\Claude\claude_desktop_config.json"
 
+    # Codex, Windsurf, VS Code, OpenCode paths
+    assert get_mcp_config_path("codex", "linux") == "~/.codex/config.toml"
+    assert get_mcp_config_path("codex", "windows") == r"%USERPROFILE%\.codex\config.toml"
+    assert get_mcp_config_path("windsurf", "linux") == "~/.codeium/windsurf/mcp_config.json"
+    assert get_mcp_config_path("windsurf", "windows") == r"%USERPROFILE%\.codeium\windsurf\mcp_config.json"
+    assert get_mcp_config_path("vscode", "linux") == "~/.config/Code/User/mcp.json"
+    assert get_mcp_config_path("vscode", "macos") == "~/Library/Application Support/Code/User/mcp.json"
+    assert get_mcp_config_path("vscode", "windows") == r"%APPDATA%\Code\User\mcp.json"
+    assert get_mcp_config_path("opencode", "linux") == "~/.config/opencode/opencode.json"
+    assert get_mcp_config_path("opencode", "windows") == r"%USERPROFILE%\.config\opencode\opencode.json"
+
+    # Directive paths
+    assert get_directive_path("antigravity", "linux") == "~/.gemini/config/GEMINI.md"
+    assert get_directive_path("cursor", "linux") == "~/.cursor/rules/helios.mdc"
+    assert get_directive_path("claude-code", "linux") == "~/.claude/CLAUDE.md"
+    assert get_directive_path("codex", "linux") == "~/.codex/AGENTS.md"
+    assert get_directive_path("windsurf", "linux") == "~/.codeium/windsurf/memories/global_rules.md"
+    assert get_directive_path("vscode", "linux") == "~/.github/copilot-instructions.md"
+    assert get_directive_path("opencode", "linux") == "~/.config/opencode/AGENTS.md"
+
     # Snippets
     anti_cfg = get_mcp_config_snippet("antigravity", "https://helios.example.com")
     assert isinstance(anti_cfg, dict)
@@ -69,11 +91,35 @@ def test_mcp_config_paths_and_snippets():
     cli_cmd = get_mcp_config_snippet("claude-code", "https://helios.example.com")
     assert cli_cmd == "claude mcp add --transport sse helios https://helios.example.com/sse"
 
+    codex_toml = get_mcp_config_snippet("codex", "https://helios.example.com", token="tok123")
+    assert isinstance(codex_toml, str)
+    assert '[mcp_servers.helios]' in codex_toml
+    assert 'url = "https://helios.example.com/mcp?token=tok123"' in codex_toml
+
+    windsurf_cfg = get_mcp_config_snippet("windsurf", "https://helios.example.com")
+    assert isinstance(windsurf_cfg, dict)
+    assert windsurf_cfg["mcpServers"]["helios"]["serverUrl"] == "https://helios.example.com/mcp"
+
+    vscode_cfg = get_mcp_config_snippet("vscode", "https://helios.example.com")
+    assert isinstance(vscode_cfg, dict)
+    assert vscode_cfg["servers"]["helios"] == {"type": "http", "url": "https://helios.example.com/mcp"}
+
+    opencode_cfg = get_mcp_config_snippet("opencode", "https://helios.example.com")
+    assert isinstance(opencode_cfg, dict)
+    assert opencode_cfg["mcp"]["helios"] == {
+        "type": "remote",
+        "url": "https://helios.example.com/mcp",
+        "enabled": True,
+    }
+
 
 def test_global_directive_roles():
     workstation_directive = generate_global_directive("workstation")
     assert workstation_directive.startswith("<!-- HELIOS:START -->")
     assert workstation_directive.strip().endswith("<!-- HELIOS:END -->")
+    assert f'directive_version="{__version__}"' in workstation_directive
+    assert f"(v{__version__})" in workstation_directive
+    assert "Never store host-local client setup states" in workstation_directive
     assert "Pre-Flight Memory Check" in workstation_directive
     assert "Write-Through Memory Capture" in workstation_directive
     assert "Before ending any session" not in workstation_directive
@@ -205,7 +251,13 @@ def test_get_client_setup_bundle_tool():
     assert "Cursor" in bundle_all
     assert "Claude-desktop" in bundle_all
     assert "Claude-code" in bundle_all
+    assert "Codex" in bundle_all
+    assert "Windsurf" in bundle_all
+    assert "Vscode" in bundle_all
+    assert "Opencode" in bundle_all
     assert "GEMINI.md" in bundle_all
+    assert "AGENTS.md" in bundle_all
+    assert "copilot-instructions.md" in bundle_all
     assert "name: remember" in bundle_all
     assert "manage_git_webhooks" in bundle_all
 
@@ -255,10 +307,14 @@ def test_setup_scripts_backtick_and_injection_safety():
     assert "$directiveText = @'" in ps_script
     assert "'@" in ps_script
     assert "$skillText = @'" in ps_script
-    assert "[regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', { param($m) $directiveText })" in ps_script
+    assert "[regex]::Replace($content, '(?s)<!-- HELIOS:START(?:\\s+[^>]+)? -->.*?<!-- HELIOS:END -->', { param($m) $directiveText })" in ps_script
     # Ensure backticks in directives are present verbatim and not stripped
     assert "`anchor_files`" in ps_script
     assert "recall_memories(" in ps_script
+    assert "OpenAI Codex MCP registered" in ps_script
+    assert "Windsurf MCP registered" in ps_script
+    assert "VS Code MCP registered" in ps_script
+    assert "OpenCode MCP registered" in ps_script
 
     # 2. Bash setup script uses single-quoted heredocs and python env pass-through
     sh_script = generate_setup_bash("https://helios.example.com", query_token="my-token+123")
@@ -268,6 +324,10 @@ def test_setup_scripts_backtick_and_injection_safety():
     assert "lambda _: directive" in sh_script
     assert "`anchor_files`" in sh_script
     assert "recall_memories(" in sh_script
+    assert "OpenAI Codex MCP registered" in sh_script
+    assert "Windsurf MCP registered" in sh_script
+    assert "VS Code MCP registered" in sh_script
+    assert "OpenCode MCP registered" in sh_script
 
 
 def test_resolve_server_base_url_proxy_chains_and_token_encoding():

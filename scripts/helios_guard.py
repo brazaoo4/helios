@@ -20,6 +20,23 @@ MUTATING_COMMAND_PATTERNS = [
     r"\bgh\s+(repo|release|pr\s+create|workflow)\b",
     r"\bsystemctl\s+(start|stop|restart|enable)\b",
 ]
+CLIENT_CONFIG_IGNORE_PATTERNS = [
+    r"(^|[\\/])\.(gemini|cursor|claude|codex|codeium|windsurf|opencode|vscode|agents)([\\/]|$)",
+    r"(^|[\\/])(GEMINI|CLAUDE|AGENTS)\.md$",
+    r"(^|[\\/])global_rules\.md$",
+    r"(^|[\\/])copilot-instructions\.md$",
+    r"(^|[\\/])(mcp|mcp_config|claude_desktop_config|opencode)\.jsonc?$",
+    r"(^|[\\/])config\.toml$",
+]
+
+
+def is_ignored_client_path(path: str, artifact_dir: str = "") -> bool:
+    """Return True if path is inside artifact_dir or is a local AI client config/directive file."""
+    if not path:
+        return False
+    if artifact_dir and path.startswith(artifact_dir):
+        return True
+    return any(re.search(pat, path, flags=re.IGNORECASE) for pat in CLIENT_CONFIG_IGNORE_PATTERNS)
 
 
 def check_recent_trajectory(transcript_path: str, artifact_dir: str = "") -> bool:
@@ -63,10 +80,10 @@ def check_recent_trajectory(transcript_path: str, artifact_dir: str = "") -> boo
                 elif "helios_save_memory" in name:
                     has_memory_capture = True
 
-                # Check if a file was mutated outside the artifact directory
+                # Check if a file was mutated outside the artifact/client-config directories
                 if name in MUTATING_TOOLS:
                     target_path = str(args.get("Path", ""))
-                    if not (artifact_dir and target_path.startswith(artifact_dir)):
+                    if not is_ignored_client_path(target_path, artifact_dir):
                         has_mutation = True
 
                 # Check if mutating shell command was executed

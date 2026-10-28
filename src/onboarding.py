@@ -1,9 +1,11 @@
 """
 Helios AI-Driven Client Onboarding Module.
 
-Generates structured installation instructions, non-destructive MCP JSON configs,
-global agent directives (GEMINI.md / CLAUDE.md / .cursor/rules) with idempotent <!-- HELIOS:START --> markers,
-and the /remember skill for Antigravity, Cursor, Claude Desktop, and Claude Code across Windows, Linux, and macOS.
+Generates structured installation instructions, non-destructive MCP configs,
+global agent directives (GEMINI.md / CLAUDE.md / AGENTS.md / global_rules.md / .cursor/rules)
+with idempotent <!-- HELIOS:START --> markers, and the /remember skill for Antigravity, Cursor,
+Claude Desktop, Claude Code, OpenAI Codex CLI, Windsurf, VS Code / GitHub Copilot, and OpenCode
+across Windows, Linux, and macOS.
 """
 
 import json
@@ -12,7 +14,19 @@ import sys
 import urllib.parse
 from typing import Any
 
+from src import __version__
 from src.config import get_api_key, get_public_url, get_word_limit
+
+SUPPORTED_CLIENTS: tuple[str, ...] = (
+    "antigravity",
+    "cursor",
+    "claude-desktop",
+    "claude-code",
+    "codex",
+    "windsurf",
+    "vscode",
+    "opencode",
+)
 
 
 def resolve_server_base_url(headers: dict[str, str] | None = None) -> str:
@@ -82,7 +96,61 @@ def get_mcp_config_path(client: str, os_platform: str = "auto") -> str:
         return "~/.config/Claude/claude_desktop_config.json"
     elif c == "claude-code":
         return "CLI command (`claude mcp add`)"
+    elif c == "codex":
+        if plat == "windows":
+            return r"%USERPROFILE%\.codex\config.toml"
+        return "~/.codex/config.toml"
+    elif c == "windsurf":
+        if plat == "windows":
+            return r"%USERPROFILE%\.codeium\windsurf\mcp_config.json"
+        return "~/.codeium/windsurf/mcp_config.json"
+    elif c == "vscode":
+        if plat == "windows":
+            return r"%APPDATA%\Code\User\mcp.json"
+        elif plat == "macos":
+            return "~/Library/Application Support/Code/User/mcp.json"
+        return "~/.config/Code/User/mcp.json"
+    elif c == "opencode":
+        if plat == "windows":
+            return r"%USERPROFILE%\.config\opencode\opencode.json"
+        return "~/.config/opencode/opencode.json"
     return "~/.mcp/config.json"
+
+
+def get_directive_path(client: str, os_platform: str = "auto") -> str:
+    """Return the standard global directive/instructions file path for the client and OS."""
+    c = client.strip().lower()
+    plat = normalize_os_platform(os_platform)
+
+    if c == "antigravity":
+        if plat == "windows":
+            return r"%USERPROFILE%\.gemini\config\GEMINI.md"
+        return "~/.gemini/config/GEMINI.md"
+    elif c == "cursor":
+        if plat == "windows":
+            return r"%USERPROFILE%\.cursor\rules\helios.mdc"
+        return "~/.cursor/rules/helios.mdc"
+    elif c in ("claude-desktop", "claude-code"):
+        if plat == "windows":
+            return r"%USERPROFILE%\.claude\CLAUDE.md"
+        return "~/.claude/CLAUDE.md"
+    elif c == "codex":
+        if plat == "windows":
+            return r"%USERPROFILE%\.codex\AGENTS.md"
+        return "~/.codex/AGENTS.md"
+    elif c == "windsurf":
+        if plat == "windows":
+            return r"%USERPROFILE%\.codeium\windsurf\memories\global_rules.md"
+        return "~/.codeium/windsurf/memories/global_rules.md"
+    elif c == "vscode":
+        if plat == "windows":
+            return r"%USERPROFILE%\.github\copilot-instructions.md"
+        return "~/.github/copilot-instructions.md"
+    elif c == "opencode":
+        if plat == "windows":
+            return r"%USERPROFILE%\.config\opencode\AGENTS.md"
+        return "~/.config/opencode/AGENTS.md"
+    return "~/.gemini/config/GEMINI.md"
 
 
 def get_mcp_config_snippet(
@@ -90,7 +158,7 @@ def get_mcp_config_snippet(
     base_url: str,
     token: str | None = None,
 ) -> dict[str, Any] | str:
-    """Generate the exact JSON configuration block or CLI command for the client."""
+    """Generate the exact JSON/TOML configuration block or CLI command for the client."""
     c = client.strip().lower()
     clean_base = base_url.rstrip("/")
     token_suffix = ""
@@ -101,10 +169,10 @@ def get_mcp_config_snippet(
         else:
             token_suffix = f"?token={urllib.parse.quote(clean_tok, safe='')}"
 
+    mcp_url = f"{clean_base}/mcp{token_suffix}"
     sse_url = f"{clean_base}/sse{token_suffix}"
 
     if c == "antigravity":
-        mcp_url = f"{clean_base}/mcp{token_suffix}"
         return {
             "mcpServers": {
                 "helios": {
@@ -131,6 +199,35 @@ def get_mcp_config_snippet(
         }
     elif c == "claude-code":
         return f"claude mcp add --transport sse helios {sse_url}"
+    elif c == "codex":
+        return f'[mcp_servers.helios]\nurl = "{mcp_url}"'
+    elif c == "windsurf":
+        return {
+            "mcpServers": {
+                "helios": {
+                    "serverUrl": mcp_url,
+                }
+            }
+        }
+    elif c == "vscode":
+        return {
+            "servers": {
+                "helios": {
+                    "type": "http",
+                    "url": mcp_url,
+                }
+            }
+        }
+    elif c == "opencode":
+        return {
+            "mcp": {
+                "helios": {
+                    "type": "remote",
+                    "url": mcp_url,
+                    "enabled": True,
+                }
+            }
+        }
     else:
         return {
             "mcpServers": {
@@ -144,21 +241,23 @@ def get_mcp_config_snippet(
 def generate_global_directive(
     instance_role: str = "workstation",
     word_limit: int | None = None,
+    version: str | None = None,
 ) -> str:
     """
-    Generate the global agent directive template (GEMINI.md / CLAUDE.md / .cursor/rules/helios.mdc)
+    Generate the global agent directive template (GEMINI.md / CLAUDE.md / AGENTS.md / global_rules.md / .cursor/rules/helios.mdc)
     wrapped in explicit <!-- HELIOS:START --> and <!-- HELIOS:END --> markers.
     """
     role = instance_role.strip().lower()
     limit = word_limit if word_limit is not None else get_word_limit()
+    ver = (version or __version__).strip().lstrip("v")
 
     if role == "server-cli":
         body = (
-            "# Global Agent Directives — Helios Memory Protocol (Server CLI)\n\n"
+            f"# Global Agent Directives — Helios Memory Protocol (Server CLI v{ver})\n\n"
             "You are connected to **Helios**, a centralized token-budgeted memory engine.\n\n"
             "## Mandatory Operating Rules:\n"
-            "1. **Pre-Flight Memory Check**: Always call `recall_memories(scope=\"<repo_or_dir>\")` at the beginning of any session or task.\n"
-            "   - If modifying infrastructure, docker compose stacks, or system services, also check `recall_memories(scope=\"homelab\")`.\n"
+            f"1. **Pre-Flight Memory Check**: Always call `recall_memories(scope=\"<repo_or_dir>\", directive_version=\"{ver}\")` at the beginning of any session or task.\n"
+            f"   - If modifying infrastructure, docker compose stacks, or system services, also check `recall_memories(scope=\"homelab\", directive_version=\"{ver}\")`.\n"
             "2. **Configuration Drift Check**: If investigating past parameter values or regressions, call `recall_history(scope=\"<repo>\")`.\n"
             "3. **Stale Memory Protocol**: When a memory is marked `[STALE]`, inspect its referenced `anchor_files`:\n"
             "   - If verified still accurate: call `revalidate_memories(memory_ids=[<id>])`.\n"
@@ -166,6 +265,7 @@ def generate_global_directive(
             f"4. **AUDN Write Gate & Token Diet**:\n"
             f"   - Facts MUST be atomic and **<= {limit} words**. Omit filler words.\n"
             "   - Category must be one of: `'rule'` (guardrails), `'fact'` (architecture/ports), `'preference'` (style), `'episodic'` (temporary 14d notes).\n"
+            "   - Never store host-local client setup states or local dotfile edits in shared repository scopes.\n"
             "5. **Terminal Token Diet & Noise Suppression (Headless Host)**:\n"
             "   - Never run unbounded logs or verbose test runners. Always use `docker logs --tail=50`, `journalctl -n 40 --no-pager`, and `git status -s`.\n"
             "   - For tests & builds: Always use quiet flags and short tracebacks (`pytest -q --tb=short --maxfail=2`, `npm test -- --silent`, `cargo test -- -q`, `docker build -q`, `pip install -q`).\n"
@@ -179,14 +279,14 @@ def generate_global_directive(
     else:
         # Workstation / IDE environment (default)
         body = (
-            "# Global Agent Directives — Helios Memory Protocol\n\n"
+            f"# Global Agent Directives — Helios Memory Protocol (v{ver})\n\n"
             "You are connected to **Helios**, a centralized token-budgeted memory engine.\n\n"
             "## Mandatory Operating Rules:\n"
-            "1. **Pre-Flight Memory Check**: Always call `recall_memories(scope=\"<current_repo_or_project>\")` at the start of any conversation or task.\n"
+            f"1. **Pre-Flight Memory Check**: Always call `recall_memories(scope=\"<current_repo_or_project>\", directive_version=\"{ver}\")` at the start of any conversation or task.\n"
             "2. **Stale Memory Protocol**: When a memory is flagged `[STALE]`, inspect the referenced `anchor_files` before relying on it:\n"
             "   - If still accurate: call `revalidate_memories(memory_ids=[<id>])`.\n"
             "   - If updated: call `save_memory(scope=..., category='fact', content=..., subject='...')`.\n"
-            "3. **Write-Through Memory Capture (Definition of Done)**: When adding dependencies, changing ports, establishing conventions, modifying schemas, or fixing non-obvious bugs, persist them immediately with `save_memory()`. A task is incomplete until its architectural delta is recorded.\n"
+            "3. **Write-Through Memory Capture (Definition of Done)**: When adding dependencies, changing ports, establishing conventions, modifying schemas, or fixing non-obvious bugs, persist them immediately with `save_memory()`. A task is incomplete until its architectural delta is recorded. Never store host-local client setup states or local dotfile edits in shared repository scopes.\n"
             f"4. **AUDN Write Gate**: Keep facts atomic and **<= {limit} words**. Omit conversational filler. Never store API secrets or bulky code dumps.\n"
             "5. **Terminal Token Diet & Noise Suppression**:\n"
             "   - For tests: Always use quiet flags and short tracebacks (`pytest -q --tb=short --maxfail=2`, `npm test -- --silent`, `cargo test -- -q`). If all tests pass, report only the 1-line summary.\n"
@@ -244,6 +344,23 @@ MUTATING_COMMAND_PATTERNS = [
     r"\\bgh\\s+(repo|release|pr\\s+create|workflow)\\b",
     r"\\bsystemctl\\s+(start|stop|restart|enable)\\b",
 ]
+CLIENT_CONFIG_IGNORE_PATTERNS = [
+    r"(^|[\\\\/])\\.(gemini|cursor|claude|codex|codeium|windsurf|opencode|vscode|agents)([\\\\/]|$)",
+    r"(^|[\\\\/])(GEMINI|CLAUDE|AGENTS)\\.md$",
+    r"(^|[\\\\/])global_rules\\.md$",
+    r"(^|[\\\\/])copilot-instructions\\.md$",
+    r"(^|[\\\\/])(mcp|mcp_config|claude_desktop_config|opencode)\\.jsonc?$",
+    r"(^|[\\\\/])config\\.toml$",
+]
+
+
+def is_ignored_client_path(path: str, artifact_dir: str = "") -> bool:
+    """Return True if path is inside artifact_dir or is a local AI client config/directive file."""
+    if not path:
+        return False
+    if artifact_dir and path.startswith(artifact_dir):
+        return True
+    return any(re.search(pat, path, flags=re.IGNORECASE) for pat in CLIENT_CONFIG_IGNORE_PATTERNS)
 
 
 def check_recent_trajectory(transcript_path: str, artifact_dir: str = "") -> bool:
@@ -286,7 +403,7 @@ def check_recent_trajectory(transcript_path: str, artifact_dir: str = "") -> boo
 
                 if name in MUTATING_TOOLS:
                     target_path = str(args.get("Path", ""))
-                    if not (artifact_dir and target_path.startswith(artifact_dir)):
+                    if not is_ignored_client_path(target_path, artifact_dir):
                         has_mutation = True
 
                 if name == "run_command":
@@ -359,22 +476,24 @@ def generate_client_bundle(
             "",
             "### 1. Remove MCP Server Entry",
         ]
-        target_clients = (
-            ["antigravity", "cursor", "claude-desktop", "claude-code"]
-            if client == "all"
-            else [client]
-        )
+        target_clients = list(SUPPORTED_CLIENTS) if client == "all" else [client]
         for c in target_clients:
             path = get_mcp_config_path(c, plat)
             if c == "claude-code":
-                lines.append("- **Claude Code**: Run CLI command `claude mcp remove helios`")
+                lines.append("- **Claude-code**: Run CLI command `claude mcp remove helios`")
+            elif c == "codex":
+                lines.append(f"- **Codex**: Run `codex mcp remove helios` or remove `[mcp_servers.helios]` from `{path}`.")
+            elif c == "vscode":
+                lines.append(f"- **Vscode**: Open `{path}` and remove the `\"helios\"` key under `\"servers\"`.")
+            elif c == "opencode":
+                lines.append(f"- **Opencode**: Open `{path}` and remove the `\"helios\"` key under `\"mcp\"`.")
             else:
                 lines.append(f"- **{c.capitalize()}**: Open `{path}` and remove the `\"helios\"` key under `\"mcpServers\"`.")
 
         lines.extend([
             "",
             "### 2. Remove Global Directive Block",
-            "In your global directive file (`GEMINI.md`, `CLAUDE.md`, or `.cursor/rules/helios.mdc`),",
+            "In your global directive file (`GEMINI.md`, `CLAUDE.md`, `AGENTS.md`, `global_rules.md`, or `.cursor/rules/helios.mdc`),",
             "delete the section bounded by the Helios markers (including the markers):",
             "```markdown",
             "<!-- HELIOS:START -->",
@@ -407,7 +526,7 @@ def generate_client_bundle(
         "> [!IMPORTANT]",
         "> **Idempotent Update Rule**:",
         "> 1. In MCP config files, update/insert only the `\"helios\"` server block; preserve all other servers.",
-        "> 2. In `GEMINI.md` / `CLAUDE.md`, if `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists,",
+        "> 2. In `GEMINI.md` / `CLAUDE.md` / `AGENTS.md` / `global_rules.md` / `.cursor/rules/helios.mdc`, if `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists,",
         ">    replace only the content between those markers. Do NOT clobber other custom user instructions.",
         "",
         "---",
@@ -415,20 +534,22 @@ def generate_client_bundle(
         "",
     ]
 
-    clients_to_show = (
-        ["antigravity", "cursor", "claude-desktop", "claude-code"]
-        if client == "all"
-        else [client]
-    )
+    clients_to_show = list(SUPPORTED_CLIENTS) if client == "all" else [client]
 
     for c in clients_to_show:
         path = get_mcp_config_path(c, os_platform)
+        dir_path = get_directive_path(c, os_platform)
         snippet = get_mcp_config_snippet(c, resolved_base, token_placeholder)
         lines.append(f"### {c.capitalize()}")
-        lines.append(f"**Path**: `{path}`")
+        lines.append(f"- **MCP Config Path**: `{path}`")
+        lines.append(f"- **Global Directive Path**: `{dir_path}`")
         if isinstance(snippet, dict):
             lines.append("```json")
             lines.append(json.dumps(snippet, indent=2))
+            lines.append("```")
+        elif c == "codex":
+            lines.append("```toml")
+            lines.append(snippet)
             lines.append("```")
         else:
             lines.append("```bash")
@@ -438,7 +559,7 @@ def generate_client_bundle(
 
     lines.extend([
         "---",
-        "## 2. Global Agent Directive (`GEMINI.md` / `CLAUDE.md` / `.cursor/rules/helios.mdc`)",
+        "## 2. Global Agent Directive (`GEMINI.md` / `CLAUDE.md` / `AGENTS.md` / `global_rules.md` / `.cursor/rules/helios.mdc`)",
         "",
         "```markdown",
         generate_global_directive(instance_role, word_limit=active_word_limit).strip(),
@@ -514,8 +635,8 @@ def generate_setup_markdown(
         "## Instructions for the AI Agent (Manual File Configuration):\n"
         "If not executing the 1-liner automated script above, follow these steps:\n"
         "1. Detect the current operating system (Windows, Linux, macOS) and the active client/editor.\n"
-        "2. Safely read and merge the `mcpServers.helios` block into the appropriate MCP config file without clobbering existing servers.\n"
-        "3. Configure the Global Agent Directive (`GEMINI.md`, `CLAUDE.md`, or `.cursor/rules/helios.mdc`). "
+        "2. Safely read and merge the `helios` server block into the appropriate MCP config file without clobbering existing servers.\n"
+        "3. Configure the Global Agent Directive (`GEMINI.md`, `CLAUDE.md`, `AGENTS.md`, `global_rules.md`, or `.cursor/rules/helios.mdc`). "
         "If `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists in the file, replace only that block, "
         "preserving all existing user rules.\n"
         "   - **Windows Note**: Files may use CRLF (`\\r\\n`) line endings and `GEMINI.md` may be a symlink. "
@@ -528,13 +649,13 @@ def generate_setup_markdown(
         "   - Call `manage_git_webhooks(action='enable', repos=[...])` for the repositories the user confirms.\n\n"
         "### MCP Client Configuration Files:\n\n"
         "#### Antigravity / Gemini CLI:\n"
-        "- **Path (Linux/macOS)**: `~/.gemini/config/mcp_config.json`\n"
+        "- **Path (Linux/macOS)**: `~/.gemini/config/mcp_config.json` (Directive: `~/.gemini/config/GEMINI.md`)\n"
         "- **Path (Windows)**: `%USERPROFILE%\\.gemini\\config\\mcp_config.json`\n"
         "```json\n"
         + json.dumps(get_mcp_config_snippet("antigravity", clean_base, token_param or None), indent=2)
         + "\n```\n\n"
         "#### Cursor IDE:\n"
-        "- **Path**: `~/.cursor/mcp.json` (or `%USERPROFILE%\\.cursor\\mcp.json` on Windows)\n"
+        "- **Path**: `~/.cursor/mcp.json` (or `%USERPROFILE%\\.cursor\\mcp.json` on Windows; Directive: `~/.cursor/rules/helios.mdc`)\n"
         "```json\n"
         + json.dumps(get_mcp_config_snippet("cursor", clean_base, token_param or None), indent=2)
         + "\n```\n\n"
@@ -546,11 +667,32 @@ def generate_setup_markdown(
         + json.dumps(get_mcp_config_snippet("claude-desktop", clean_base, token_param or None), indent=2)
         + "\n```\n\n"
         "#### Claude Code CLI:\n"
+        "- **Directive Path**: `~/.claude/CLAUDE.md`\n"
         "```bash\n"
         + str(get_mcp_config_snippet("claude-code", clean_base, token_param or None))
         + "\n```\n\n"
+        "#### OpenAI Codex CLI:\n"
+        "- **Path**: `~/.codex/config.toml` (or `%USERPROFILE%\\.codex\\config.toml`; Directive: `~/.codex/AGENTS.md`)\n"
+        "```toml\n"
+        + str(get_mcp_config_snippet("codex", clean_base, token_param or None))
+        + "\n```\n\n"
+        "#### Windsurf (Codeium):\n"
+        "- **Path**: `~/.codeium/windsurf/mcp_config.json` (Directive: `~/.codeium/windsurf/memories/global_rules.md`)\n"
+        "```json\n"
+        + json.dumps(get_mcp_config_snippet("windsurf", clean_base, token_param or None), indent=2)
+        + "\n```\n\n"
+        "#### VS Code / GitHub Copilot:\n"
+        "- **Path (Linux)**: `~/.config/Code/User/mcp.json` | **macOS**: `~/Library/Application Support/Code/User/mcp.json` | **Windows**: `%APPDATA%\\Code\\User\\mcp.json`\n"
+        "```json\n"
+        + json.dumps(get_mcp_config_snippet("vscode", clean_base, token_param or None), indent=2)
+        + "\n```\n\n"
+        "#### OpenCode CLI:\n"
+        "- **Path**: `~/.config/opencode/opencode.json` (Directive: `~/.config/opencode/AGENTS.md`)\n"
+        "```json\n"
+        + json.dumps(get_mcp_config_snippet("opencode", clean_base, token_param or None), indent=2)
+        + "\n```\n\n"
         "### Global Directive Template:\n"
-        "Save this in `GEMINI.md`, `CLAUDE.md`, or `.cursor/rules/helios.mdc` (idempotently replacing existing `<!-- HELIOS:START -->` block):\n"
+        "Save this in `GEMINI.md`, `CLAUDE.md`, `AGENTS.md`, `global_rules.md`, or `.cursor/rules/helios.mdc` (idempotently replacing existing `<!-- HELIOS:START -->` block):\n"
         "```markdown\n"
         + generate_global_directive("workstation", word_limit=active_word_limit).strip()
         + "\n```\n\n"
@@ -587,6 +729,28 @@ def generate_setup_powershell(
     return f"""# Helios Automated Client Setup for Windows PowerShell
 $ErrorActionPreference = 'Stop'
 Write-Host "Configuring Helios client environment for {clean_base} (role: {role_norm})..." -ForegroundColor Cyan
+
+$directiveText = @'
+{directive}
+'@
+
+function Set-HeliosDirective {{
+    param([string]$FilePath)
+    $parentDir = Split-Path -Parent $FilePath
+    if (-not (Test-Path $parentDir)) {{ New-Item -ItemType Directory -Path $parentDir -Force | Out-Null }}
+    if (Test-Path $FilePath) {{
+        $resolvedPath = (Resolve-Path $FilePath).Path
+        $content = [System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)
+        if ($content -match '(?s)<!-- HELIOS:START(?:\\s+[^>]+)? -->.*?<!-- HELIOS:END -->') {{
+            $content = [regex]::Replace($content, '(?s)<!-- HELIOS:START(?:\\s+[^>]+)? -->.*?<!-- HELIOS:END -->', {{ param($m) $directiveText }})
+        }} else {{
+            $content = $directiveText + "`r`n`r`n" + $content
+        }}
+        [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.Encoding]::UTF8)
+    }} else {{
+        [System.IO.File]::WriteAllText($FilePath, $directiveText, [System.Text.Encoding]::UTF8)
+    }}
+}}
 
 # 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
 $configDir = Join-Path $env:USERPROFILE ".gemini\\config"
@@ -629,11 +793,15 @@ if ((Test-Path $cursorDir) -or "{client_norm}" -eq "cursor" -or "{client_norm}" 
     $cursorJson = $cursorData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($cursorMcpPath, $cursorJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] Cursor MCP registered in $cursorMcpPath" -ForegroundColor Green
+    $cursorRulesPath = Join-Path $cursorDir "rules\\helios.mdc"
+    Set-HeliosDirective -FilePath $cursorRulesPath
+    Write-Host "  [OK] Cursor directive embedded in $cursorRulesPath" -ForegroundColor Green
 }}
 
 # 3. Claude Desktop Configuration (if %APPDATA%\\Claude exists or client is claude-desktop/all)
 $claudeDir = Join-Path $env:APPDATA "Claude"
 if ((Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop") {{
+    if (-not (Test-Path $claudeDir)) {{ New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null }}
     $claudeMcpPath = Join-Path $claudeDir "claude_desktop_config.json"
     $claudeData = @{{ mcpServers = @{{}} }}
     if (Test-Path $claudeMcpPath) {{
@@ -649,27 +817,108 @@ if ((Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop") {{
     Write-Host "  [OK] Claude Desktop MCP registered in $claudeMcpPath" -ForegroundColor Green
 }}
 
-# 4. Global Directive (GEMINI.md with CRLF and symlink handling)
-$geminiPath = Join-Path $configDir "GEMINI.md"
-$directiveText = @'
-{directive}
-'@
-
-if (Test-Path $geminiPath) {{
-    $resolvedPath = (Resolve-Path $geminiPath).Path
-    $content = [System.IO.File]::ReadAllText($resolvedPath, [System.Text.Encoding]::UTF8)
-    if ($content -match '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->') {{
-        $content = [regex]::Replace($content, '(?s)<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', {{ param($m) $directiveText }})
-    }} else {{
-        $content = $directiveText + "`r`n`r`n" + $content
-    }}
-    [System.IO.File]::WriteAllText($resolvedPath, $content, [System.Text.Encoding]::UTF8)
-}} else {{
-    [System.IO.File]::WriteAllText($geminiPath, $directiveText, [System.Text.Encoding]::UTF8)
+$claudeDotDir = Join-Path $env:USERPROFILE ".claude"
+if ((Test-Path $claudeDotDir) -or (Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop" -or "{client_norm}" -eq "claude-code") {{
+    $claudeMdPath = Join-Path $claudeDotDir "CLAUDE.md"
+    Set-HeliosDirective -FilePath $claudeMdPath
+    Write-Host "  [OK] Claude directive embedded in $claudeMdPath" -ForegroundColor Green
 }}
+
+# 4. OpenAI Codex CLI Configuration (~/.codex/config.toml & ~/.codex/AGENTS.md)
+$codexDir = Join-Path $env:USERPROFILE ".codex"
+if ((Test-Path $codexDir) -or "{client_norm}" -eq "codex") {{
+    if (-not (Test-Path $codexDir)) {{ New-Item -ItemType Directory -Path $codexDir -Force | Out-Null }}
+    $codexTomlPath = Join-Path $codexDir "config.toml"
+    $tomlBlock = "[mcp_servers.helios]`r`nurl = `"{mcp_url}`""
+    if (Test-Path $codexTomlPath) {{
+        $tContent = [System.IO.File]::ReadAllText($codexTomlPath, [System.Text.Encoding]::UTF8)
+        if ($tContent -match '(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\z)') {{
+            $tContent = [regex]::Replace($tContent, '(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\z)', ($tomlBlock + "`r`n"))
+        }} else {{
+            $tContent = $tContent.TrimEnd() + "`r`n`r`n" + $tomlBlock + "`r`n"
+        }}
+        [System.IO.File]::WriteAllText($codexTomlPath, $tContent, [System.Text.Encoding]::UTF8)
+    }} else {{
+        [System.IO.File]::WriteAllText($codexTomlPath, ($tomlBlock + "`r`n"), [System.Text.Encoding]::UTF8)
+    }}
+    Write-Host "  [OK] OpenAI Codex MCP registered in $codexTomlPath" -ForegroundColor Green
+    $codexAgentsPath = Join-Path $codexDir "AGENTS.md"
+    Set-HeliosDirective -FilePath $codexAgentsPath
+    Write-Host "  [OK] OpenAI Codex directive embedded in $codexAgentsPath" -ForegroundColor Green
+}}
+
+# 5. Windsurf Configuration (~/.codeium/windsurf/mcp_config.json & global_rules.md)
+$windsurfDir = Join-Path $env:USERPROFILE ".codeium\\windsurf"
+if ((Test-Path $windsurfDir) -or "{client_norm}" -eq "windsurf") {{
+    if (-not (Test-Path $windsurfDir)) {{ New-Item -ItemType Directory -Path $windsurfDir -Force | Out-Null }}
+    $windsurfMcpPath = Join-Path $windsurfDir "mcp_config.json"
+    $wsData = @{{ mcpServers = @{{}} }}
+    if (Test-Path $windsurfMcpPath) {{
+        try {{
+            $wsExisting = Get-Content -Path $windsurfMcpPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($wsExisting -and $wsExisting.ContainsKey("mcpServers")) {{ $wsData = $wsExisting }}
+        }} catch {{}}
+    }}
+    if (-not $wsData.ContainsKey("mcpServers") -or $null -eq $wsData.mcpServers) {{ $wsData.mcpServers = @{{}} }}
+    $wsData.mcpServers["helios"] = @{{ serverUrl = "{mcp_url}" }}
+    $wsJson = $wsData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($windsurfMcpPath, $wsJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Windsurf MCP registered in $windsurfMcpPath" -ForegroundColor Green
+    $wsRulesPath = Join-Path $windsurfDir "memories\\global_rules.md"
+    Set-HeliosDirective -FilePath $wsRulesPath
+    Write-Host "  [OK] Windsurf directive embedded in $wsRulesPath" -ForegroundColor Green
+}}
+
+# 6. VS Code / GitHub Copilot (%APPDATA%\\Code\\User\\mcp.json & ~/.github/copilot-instructions.md)
+$vscodeDir = Join-Path $env:APPDATA "Code\\User"
+if ((Test-Path $vscodeDir) -or "{client_norm}" -eq "vscode") {{
+    if (-not (Test-Path $vscodeDir)) {{ New-Item -ItemType Directory -Path $vscodeDir -Force | Out-Null }}
+    $vscodeMcpPath = Join-Path $vscodeDir "mcp.json"
+    $vscData = @{{ servers = @{{}} }}
+    if (Test-Path $vscodeMcpPath) {{
+        try {{
+            $vscExisting = Get-Content -Path $vscodeMcpPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($vscExisting -and $vscExisting.ContainsKey("servers")) {{ $vscData = $vscExisting }}
+        }} catch {{}}
+    }}
+    if (-not $vscData.ContainsKey("servers") -or $null -eq $vscData.servers) {{ $vscData.servers = @{{}} }}
+    $vscData.servers["helios"] = @{{ type = "http"; url = "{mcp_url}" }}
+    $vscJson = $vscData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($vscodeMcpPath, $vscJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] VS Code MCP registered in $vscodeMcpPath" -ForegroundColor Green
+    $copilotRulesPath = Join-Path $env:USERPROFILE ".github\\copilot-instructions.md"
+    Set-HeliosDirective -FilePath $copilotRulesPath
+    Write-Host "  [OK] Copilot directive embedded in $copilotRulesPath" -ForegroundColor Green
+}}
+
+# 7. OpenCode Configuration (~/.config/opencode/opencode.json & AGENTS.md)
+$opencodeDir = Join-Path $env:USERPROFILE ".config\\opencode"
+if ((Test-Path $opencodeDir) -or "{client_norm}" -eq "opencode") {{
+    if (-not (Test-Path $opencodeDir)) {{ New-Item -ItemType Directory -Path $opencodeDir -Force | Out-Null }}
+    $opencodeMcpPath = Join-Path $opencodeDir "opencode.json"
+    $ocData = @{{ '$schema' = "https://opencode.ai/config.json"; mcp = @{{}} }}
+    if (Test-Path $opencodeMcpPath) {{
+        try {{
+            $ocExisting = Get-Content -Path $opencodeMcpPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($ocExisting) {{ $ocData = $ocExisting }}
+        }} catch {{}}
+    }}
+    if (-not $ocData.ContainsKey("mcp") -or $null -eq $ocData.mcp) {{ $ocData["mcp"] = @{{}} }}
+    $ocData.mcp["helios"] = @{{ type = "remote"; url = "{mcp_url}"; enabled = $true }}
+    $ocJson = $ocData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($opencodeMcpPath, $ocJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] OpenCode MCP registered in $opencodeMcpPath" -ForegroundColor Green
+    $ocAgentsPath = Join-Path $opencodeDir "AGENTS.md"
+    Set-HeliosDirective -FilePath $ocAgentsPath
+    Write-Host "  [OK] OpenCode directive embedded in $ocAgentsPath" -ForegroundColor Green
+}}
+
+# 8. Global Directive (GEMINI.md with CRLF and symlink handling)
+$geminiPath = Join-Path $configDir "GEMINI.md"
+Set-HeliosDirective -FilePath $geminiPath
 Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Green
 
-# 5. /remember Skill (~/.gemini/skills/remember/SKILL.md)
+# 9. /remember Skill (~/.gemini/skills/remember/SKILL.md)
 $skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
 if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
 $skillPath = Join-Path $skillDir "SKILL.md"
@@ -718,6 +967,39 @@ set -euo pipefail
 
 echo "Configuring Helios client environment for {clean_base} (role: {role_norm})..."
 
+DIRECTIVE_CONTENT="$(cat <<'HELIOS_DIRECTIVE_EOF'
+{directive}
+HELIOS_DIRECTIVE_EOF
+)"
+
+inject_directive() {{
+    local target_path="$1"
+    mkdir -p "$(dirname "$target_path")"
+    TARGET_PATH="$target_path" DIRECTIVE="$DIRECTIVE_CONTENT" python3 - <<'PYEOF'
+import os, re
+path = os.environ["TARGET_PATH"]
+directive = os.environ["DIRECTIVE"]
+if os.path.exists(path):
+    real_path = os.path.realpath(path)
+    with open(real_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    if re.search(r'<!-- HELIOS:START(?:\\s+[^>]+)? -->.*?<!-- HELIOS:END -->', content, flags=re.DOTALL):
+        new_content = re.sub(
+            r'<!-- HELIOS:START(?:\\s+[^>]+)? -->.*?<!-- HELIOS:END -->',
+            lambda _: directive,
+            content,
+            flags=re.DOTALL,
+        )
+    else:
+        new_content = directive + '\\n\\n' + content
+    with open(real_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+else:
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(directive)
+PYEOF
+}}
+
 # 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
 CONFIG_DIR="$HOME/.gemini/config"
 mkdir -p "$CONFIG_DIR"
@@ -765,6 +1047,8 @@ with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 PYEOF
     echo "  [OK] Cursor MCP registered in $CURSOR_MCP"
+    inject_directive "$CURSOR_DIR/rules/helios.mdc"
+    echo "  [OK] Cursor directive embedded in $CURSOR_DIR/rules/helios.mdc"
 fi
 
 # 3. Claude Desktop Configuration (if directory exists or client is claude-desktop/all)
@@ -794,45 +1078,133 @@ PYEOF
     fi
 done
 
-# 4. Claude Code CLI (if claude CLI binary exists in PATH)
+# 4. Claude Code CLI (if claude CLI binary exists in PATH or client matches)
 if command -v claude >/dev/null 2>&1; then
     claude mcp add --transport sse helios "{sse_url}" >/dev/null 2>&1 || true
     echo "  [OK] Claude Code CLI MCP registered"
 fi
+if [ -d "$HOME/.claude" ] || command -v claude >/dev/null 2>&1 || [ "{client_norm}" = "claude-code" ] || [ "{client_norm}" = "claude-desktop" ]; then
+    inject_directive "$HOME/.claude/CLAUDE.md"
+    echo "  [OK] Claude directive embedded in $HOME/.claude/CLAUDE.md"
+fi
 
-# 5. Global Directive (GEMINI.md with symlink resolution)
-GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
-DIRECTIVE_CONTENT="$(cat <<'HELIOS_DIRECTIVE_EOF'
-{directive}
-HELIOS_DIRECTIVE_EOF
-)"
-
-GEMINI_PATH="$GEMINI_PATH" DIRECTIVE="$DIRECTIVE_CONTENT" python3 - <<'PYEOF'
+# 5. OpenAI Codex CLI (if ~/.codex or codex binary exists or client is codex)
+CODEX_DIR="$HOME/.codex"
+if [ -d "$CODEX_DIR" ] || command -v codex >/dev/null 2>&1 || [ "{client_norm}" = "codex" ]; then
+    mkdir -p "$CODEX_DIR"
+    CODEX_TOML="$CODEX_DIR/config.toml"
+    CODEX_TOML="$CODEX_TOML" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
 import os, re
-path = os.environ["GEMINI_PATH"]
-directive = os.environ["DIRECTIVE"]
+path = os.environ["CODEX_TOML"]
+mcp_url = os.environ["MCP_URL"]
+block = f"[mcp_servers.helios]\\nurl = \\"{mcp_url}\\"\\n"
 if os.path.exists(path):
-    real_path = os.path.realpath(path)
-    with open(real_path, 'r', encoding='utf-8') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
-    if re.search(r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->', content, flags=re.DOTALL):
-        new_content = re.sub(
-            r'<!-- HELIOS:START -->.*?<!-- HELIOS:END -->',
-            lambda _: directive,
-            content,
-            flags=re.DOTALL,
-        )
+    if re.search(r'(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\Z)', content):
+        content = re.sub(r'(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\Z)', block, content)
     else:
-        new_content = directive + '\\n\\n' + content
-    with open(real_path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
+        content = content.rstrip() + "\\n\\n" + block
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
 else:
     with open(path, 'w', encoding='utf-8') as f:
-        f.write(directive)
+        f.write(block)
 PYEOF
+    echo "  [OK] OpenAI Codex MCP registered in $CODEX_TOML"
+    inject_directive "$CODEX_DIR/AGENTS.md"
+    echo "  [OK] OpenAI Codex directive embedded in $CODEX_DIR/AGENTS.md"
+fi
+
+# 6. Windsurf Configuration (if ~/.codeium/windsurf exists or client is windsurf)
+WINDSURF_DIR="$HOME/.codeium/windsurf"
+if [ -d "$WINDSURF_DIR" ] || [ "{client_norm}" = "windsurf" ]; then
+    mkdir -p "$WINDSURF_DIR"
+    WINDSURF_MCP="$WINDSURF_DIR/mcp_config.json"
+    WINDSURF_MCP="$WINDSURF_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
+import json, os
+path = os.environ["WINDSURF_MCP"]
+mcp_url = os.environ["MCP_URL"]
+data = {{'mcpServers': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
+    data['mcpServers'] = {{}}
+data['mcpServers']['helios'] = {{'serverUrl': mcp_url}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+    echo "  [OK] Windsurf MCP registered in $WINDSURF_MCP"
+    inject_directive "$WINDSURF_DIR/memories/global_rules.md"
+    echo "  [OK] Windsurf directive embedded in $WINDSURF_DIR/memories/global_rules.md"
+fi
+
+# 7. VS Code / GitHub Copilot (if Code/User dir exists or client is vscode)
+for VSCODE_BASE in "$HOME/.config/Code/User" "$HOME/Library/Application Support/Code/User"; do
+    if [ -d "$VSCODE_BASE" ] || [ "{client_norm}" = "vscode" ]; then
+        mkdir -p "$VSCODE_BASE"
+        VSCODE_MCP="$VSCODE_BASE/mcp.json"
+        VSCODE_MCP="$VSCODE_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
+import json, os
+path = os.environ["VSCODE_MCP"]
+mcp_url = os.environ["MCP_URL"]
+data = {{'servers': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'servers' not in data or not isinstance(data['servers'], dict):
+    data['servers'] = {{}}
+data['servers']['helios'] = {{'type': 'http', 'url': mcp_url}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+        echo "  [OK] VS Code MCP registered in $VSCODE_MCP"
+        inject_directive "$HOME/.github/copilot-instructions.md"
+        echo "  [OK] Copilot directive embedded in $HOME/.github/copilot-instructions.md"
+        break
+    fi
+done
+
+# 8. OpenCode Configuration (if ~/.config/opencode or opencode binary exists or client is opencode)
+OPENCODE_DIR="$HOME/.config/opencode"
+if [ -d "$OPENCODE_DIR" ] || command -v opencode >/dev/null 2>&1 || [ "{client_norm}" = "opencode" ]; then
+    mkdir -p "$OPENCODE_DIR"
+    OPENCODE_MCP="$OPENCODE_DIR/opencode.json"
+    OPENCODE_MCP="$OPENCODE_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
+import json, os
+path = os.environ["OPENCODE_MCP"]
+mcp_url = os.environ["MCP_URL"]
+data = {{'$schema': 'https://opencode.ai/config.json', 'mcp': {{}}}}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
+if 'mcp' not in data or not isinstance(data['mcp'], dict):
+    data['mcp'] = {{}}
+data['mcp']['helios'] = {{'type': 'remote', 'url': mcp_url, 'enabled': True}}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+    echo "  [OK] OpenCode MCP registered in $OPENCODE_MCP"
+    inject_directive "$OPENCODE_DIR/AGENTS.md"
+    echo "  [OK] OpenCode directive embedded in $OPENCODE_DIR/AGENTS.md"
+fi
+
+# 9. Global Directive (GEMINI.md with symlink resolution)
+GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
+inject_directive "$GEMINI_PATH"
 echo "  [OK] Global directive embedded in $GEMINI_PATH"
 
-# 6. /remember Skill (~/.gemini/skills/remember/SKILL.md)
+# 10. /remember Skill (~/.gemini/skills/remember/SKILL.md)
 SKILL_DIR="$HOME/.gemini/skills/remember"
 mkdir -p "$SKILL_DIR"
 cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
@@ -840,7 +1212,7 @@ cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
 HELIOS_SKILL_EOF
 echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
 
-# 7. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
+# 11. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
 SCRIPTS_DIR="$CONFIG_DIR/scripts"
 mkdir -p "$SCRIPTS_DIR"
 cat <<'HELIOS_GUARD_EOF' > "$SCRIPTS_DIR/helios_guard.py"

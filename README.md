@@ -138,17 +138,17 @@ docker compose up -d --build
 
 ## ⚡ 2. Client Installation for AI Agents
 
-Helios supports zero-friction onboarding across **Antigravity**, **Cursor**, **Claude Desktop**, and **Claude Code** on **Linux**, **macOS**, and **Windows**.
+Helios supports zero-friction onboarding across **Antigravity**, **Cursor**, **Claude Desktop**, **Claude Code**, **OpenAI Codex**, **Windsurf**, **VS Code (GitHub Copilot)**, and **OpenCode** on **Linux**, **macOS**, and **Windows**.
 
 ### 2.1 Conversational AI Setup (1 Prompt)
 
-Paste this single prompt into your coding agent (Claude Code, Cursor, Antigravity):
+Paste this single prompt into your coding agent (Claude Code, Cursor, Antigravity, Codex, Windsurf, VS Code, OpenCode):
 
 ```text
 Fetch https://<your-helios-host>/setup and configure my local MCP client, global directives, and /remember skill.
 ```
 
-The agent fetches `GET /setup`, detects your OS and IDE, safely merges the `"helios"` server entry into your MCP JSON configuration without overwriting existing servers, adds the Helios directive block, and installs the `/remember` skill.
+The agent fetches `GET /setup`, detects your OS and IDE, safely merges the `"helios"` server entry into your MCP configuration without overwriting existing servers, adds the Helios directive block, and installs the `/remember` skill.
 
 ### 2.2 Instant Terminal 1-Liner Setup
 
@@ -176,7 +176,7 @@ irm "https://<your-helios-host>/setup.ps1?role=server-cli" | iex
 
 > [!TIP]
 > **Multi-Client Auto-Detection & Token Passing**:
-> The setup scripts automatically detect and configure Antigravity (`mcp_config.json` + `GEMINI.md` + `/remember`), Cursor (`~/.cursor/mcp.json`), Claude Desktop (`claude_desktop_config.json`), and Claude Code (`claude mcp add`).
+> The setup scripts automatically detect and configure Antigravity (`mcp_config.json` + `GEMINI.md` + `/remember`), Cursor (`~/.cursor/mcp.json` + `rules/helios.mdc`), Claude Desktop (`claude_desktop_config.json`), Claude Code (`claude mcp add` + `~/.claude/CLAUDE.md`), OpenAI Codex (`~/.codex/config.toml` + `~/.codex/AGENTS.md`), Windsurf (`~/.codeium/windsurf/mcp_config.json` + `memories/global_rules.md`), VS Code (`User/mcp.json` + `~/.github/copilot-instructions.md`), and OpenCode (`~/.config/opencode/opencode.json` + `AGENTS.md`).
 > If `HELIOS_API_KEY` is enabled, append `?token=<your_key>` to the setup URL.
 
 #### Client Configuration Paths & Snippets
@@ -220,15 +220,58 @@ irm "https://<your-helios-host>/setup.ps1?role=server-cli" | iex
   claude mcp add --transport sse helios https://<your-helios-host>/sse
   ```
 
+* **OpenAI Codex CLI** (`~/.codex/config.toml` | `%USERPROFILE%\.codex\config.toml`):
+  ```toml
+  [mcp_servers.helios]
+  url = "https://<your-helios-host>/mcp"
+  ```
+
+* **Windsurf IDE** (`~/.codeium/windsurf/mcp_config.json` | `%USERPROFILE%\.codeium\windsurf\mcp_config.json`):
+  ```json
+  {
+    "mcpServers": {
+      "helios": {
+        "serverUrl": "https://<your-helios-host>/mcp"
+      }
+    }
+  }
+  ```
+
+* **VS Code / GitHub Copilot** (`~/.config/Code/User/mcp.json` | `~/Library/Application Support/Code/User/mcp.json` | `%APPDATA%\Code\User\mcp.json`):
+  ```json
+  {
+    "servers": {
+      "helios": {
+        "type": "http",
+        "url": "https://<your-helios-host>/mcp"
+      }
+    }
+  }
+  ```
+
+* **OpenCode CLI** (`~/.config/opencode/opencode.json` | `%USERPROFILE%\.config\opencode\opencode.json`):
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+      "helios": {
+        "type": "remote",
+        "url": "https://<your-helios-host>/mcp",
+        "enabled": true
+      }
+    }
+  }
+  ```
+
 ### 2.3 Safe In-Place Directive Management (`<!-- HELIOS:START -->`)
 
-Helios encloses its global agent instructions inside idempotent HTML comment delimiters (`GEMINI.md` / `CLAUDE.md` / `.cursor/rules/helios.mdc`) so your personal custom rules are never overwritten:
+Helios encloses its global agent instructions inside idempotent HTML comment delimiters (`GEMINI.md` / `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/helios.mdc` / `global_rules.md` / `copilot-instructions.md`) so your personal custom rules are never overwritten:
 
 ```markdown
 <!-- HELIOS:START -->
-# Global Agent Directives — Helios Memory Protocol
+# Global Agent Directives — Helios Memory Protocol (v1.5.0)
 You are connected to Helios, a centralized token-budgeted memory engine.
-1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>")` at task start.
+1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>", directive_version="1.5.0")` at task start.
 2. Stale Protocol: When a memory is marked `[STALE]`, inspect `anchor_files` before relying on it.
 3. Write-Through DoD: Any change to ports, stacks, dependencies, or bug fixes is INCOMPLETE until `save_memory()` is called.
 4. Token Diet: Keep facts atomic (<= 25 words).
@@ -294,9 +337,9 @@ sequenceDiagram
 flowchart TD
     subgraph Clients["AI Clients & IDEs"]
         AG["Antigravity CLI / IDE"]
-        CR["Cursor IDE"]
-        CD["Claude Desktop"]
-        CC["Claude Code"]
+        CR["Cursor & Windsurf"]
+        CD["Claude Desktop & Code"]
+        CX["OpenAI Codex / VS Code / OpenCode"]
     end
 
     subgraph Ingress["Ingress & Security Layer"]
@@ -358,7 +401,7 @@ Helios exposes 10 FastMCP tools with strict Pydantic field descriptions and work
 
 | Tool | Key Parameters | Purpose |
 | :--- | :--- | :--- |
-| `recall_memories` | `scope`, `query`, `category`, `status_filter`, `limit`, `include_global` | Search active/stale memories in `<scope>` via FTS5 BM25 ranking or categorical priority (`rule` → `fact` → `preference` → `episodic`). |
+| `recall_memories` | `scope`, `query`, `category`, `status_filter`, `limit`, `include_global`, `directive_version` | Search active/stale memories in `<scope>` via FTS5 BM25 ranking or categorical priority (`rule` → `fact` → `preference` → `episodic`). |
 | `save_memory` | `scope`, `category`, `content`, `subject`, `anchor_files`, `replaces_id` | Save or supersede an atomic memory (≤ `HELIOS_WORD_LIMIT` words) and sync Markdown exports. |
 | `revalidate_memories` | `memory_ids` | Batch-restore `[STALE]` memories back to active after verifying file changes. |
 | `deprecate_memory` | `memory_id`, `reason` | Retire/archive an obsolete memory and log the reason in the scope's changelog. |
@@ -381,6 +424,7 @@ recall_memories(
     status_filter: Literal["all", "active", "stale"] = "all",
     limit: int = 8,
     include_global: bool = True,
+    directive_version: str = "",
 ) -> str
 
 # 2. Store or supersede an atomic memory
@@ -425,7 +469,17 @@ manage_git_webhooks(
 
 # 9. Client onboarding & lifecycle management
 get_client_setup_bundle(
-    client: Literal["antigravity", "cursor", "claude-desktop", "claude-code", "all"] = "all",
+    client: Literal[
+        "antigravity",
+        "cursor",
+        "claude-desktop",
+        "claude-code",
+        "codex",
+        "windsurf",
+        "vscode",
+        "opencode",
+        "all",
+    ] = "all",
     os_platform: Literal["linux", "macos", "windows", "auto"] = "auto",
     instance_role: Literal["workstation", "server-cli"] = "workstation",
     action: Literal["install_or_update", "switch_role", "uninstall"] = "install_or_update",

@@ -7,6 +7,7 @@ from io import BytesIO
 import pytest
 from starlette.testclient import TestClient
 
+from src import __version__
 from src.db import init_db, set_alias
 from src.exporter import get_export_dir
 from src.server import (
@@ -155,6 +156,31 @@ def test_cold_start_onboarding_signal():
     recalled_non_empty = recall_memories(scope="other_scope", include_global=False)
     assert "COLD START ONBOARDING" not in recalled_non_empty
     assert "No active memories found for scope 'other_scope'." in recalled_non_empty
+
+
+def test_recall_memories_directive_drift_detection():
+    save_memory(scope="webapp", category="fact", content="Frontend runs on port 3000", subject="web-port")
+
+    # 1. Legacy client (directive_version omitted / empty) -> shows drift banner
+    recalled_legacy = recall_memories(scope="webapp")
+    assert "CLIENT DIRECTIVE DRIFT" in recalled_legacy
+    assert "unversioned/legacy" in recalled_legacy
+    assert f"Helios Server v{__version__}" in recalled_legacy
+    assert "Do NOT call save_memory for local client config updates" in recalled_legacy
+
+    # 2. Outdated client (e.g. 1.2.0) -> shows drift banner with v1.2.0
+    recalled_old = recall_memories(scope="webapp", directive_version="1.2.0")
+    assert "CLIENT DIRECTIVE DRIFT" in recalled_old
+    assert "v1.2.0" in recalled_old
+
+    # 3. Matching client version -> NO drift banner
+    recalled_current = recall_memories(scope="webapp", directive_version=__version__)
+    assert "CLIENT DIRECTIVE DRIFT" not in recalled_current
+    assert "Frontend runs on port 3000" in recalled_current
+
+    # 4. Matching client version with 'v' prefix -> NO drift banner
+    recalled_v_prefix = recall_memories(scope="webapp", directive_version=f"v{__version__}")
+    assert "CLIENT DIRECTIVE DRIFT" not in recalled_v_prefix
 
 
 def test_manage_scope_alias_mcp_tool():

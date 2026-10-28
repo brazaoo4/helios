@@ -56,6 +56,7 @@ if FuncMetadata is not None and not getattr(FuncMetadata, "_helios_offloaded", F
     FuncMetadata.call_fn_with_arg_validation = _offloaded_call_fn
     FuncMetadata._helios_offloaded = True
 
+from src import __version__
 from src.config import (
     LOCKED_SECURITY_KEYS,
     MUTABLE_SETTINGS,
@@ -217,6 +218,7 @@ def recall_memories(
     status_filter: Annotated[Literal["all", "active", "stale"], Field(default="all", description="Filter by drift status: 'all' (default), 'active' only, or 'stale' only (to audit drifted memories).")] = "all",
     limit: Annotated[int, Field(default=8, ge=1, le=50, description="Maximum number of memories to return (clamped between 1 and 50).")] = 8,
     include_global: Annotated[bool, Field(default=True, description="Whether to include global guardrails and rules alongside scope-specific memories.")] = True,
+    directive_version: Annotated[str, Field(default="", description="Client directive version from the local <!-- HELIOS:START --> header (e.g., '1.5.0'). Leave empty if unversioned/legacy.")] = "",
 ) -> str:
     """
     Recall active memories from Helios using FTS5 BM25 search.
@@ -231,12 +233,24 @@ def recall_memories(
             category=cat_filter,
             status_filter=status_filter,
         )
+        drift_banner = ""
+        if status_filter == "all" and cat_filter is None and not is_db_empty():
+            clean_client_ver = directive_version.strip().lstrip("v")
+            clean_server_ver = __version__.strip().lstrip("v")
+            if clean_client_ver != clean_server_ver:
+                ver_label = f"v{clean_client_ver}" if clean_client_ver else "unversioned/legacy"
+                drift_banner = (
+                    f"\n\n> [CLIENT DIRECTIVE DRIFT: Local Helios directives ({ver_label}) are out of sync with "
+                    f"Helios Server v{clean_server_ver}. Call get_client_setup_bundle(action='install_or_update') "
+                    "to update your local directive file. Do NOT call save_memory for local client config updates.]"
+                )
+
         if not memories:
             resolved = resolve_scope(scope)
             msg = f"No active memories found for scope '{resolved}'."
             if is_db_empty():
                 return f"{COLD_START_ONBOARDING_NOTICE}\n\n{msg}"
-            return msg
+            return f"{msg}{drift_banner}"
 
         lines = []
         for m in memories:
@@ -247,7 +261,7 @@ def recall_memories(
             lines.append(
                 f"- `#{m['id']}` ({m['scope']}/{m['category']}) {subj}{m['content']}{stale}{anchor_str}"
             )
-        return "\n".join(lines)
+        return "\n".join(lines) + drift_banner
     except Exception as exc:
         return f"Error recalling memories: {exc}"
 
@@ -640,7 +654,17 @@ def manage_server_config(
 @mcp.tool()
 def get_client_setup_bundle(
     client: Annotated[
-        Literal["antigravity", "cursor", "claude-desktop", "claude-code", "all"],
+        Literal[
+            "antigravity",
+            "cursor",
+            "claude-desktop",
+            "claude-code",
+            "codex",
+            "windsurf",
+            "vscode",
+            "opencode",
+            "all",
+        ],
         Field(description="Target client environment to configure.")
     ] = "all",
     os_platform: Annotated[
@@ -657,7 +681,7 @@ def get_client_setup_bundle(
     ] = "install_or_update",
 ) -> str:
     """
-    Retrieve client configuration snippets, global directives (GEMINI.md), and the /remember skill definition.
+    Retrieve client configuration snippets, global directives (GEMINI.md, AGENTS.md, CLAUDE.md, etc.), and the /remember skill definition.
     """
     base_url = resolve_server_base_url()
     return generate_client_bundle(
