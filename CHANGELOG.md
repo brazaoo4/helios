@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.2](https://github.com/brazaoo4/helios/compare/v1.7.1...v1.7.2) (2026-10-28)
+
+
+### Documentation
+
+* remove social banner from README ([ea51b6c](https://github.com/brazaoo4/helios/commit/ea51b6ce439f94004741d473d4bf3cc37791a37d))
+* remove social banner from README ([462a197](https://github.com/brazaoo4/helios/commit/462a19768fc9f8868abec0ea99edb05a8b87638c))
+
 ## [1.7.1](https://github.com/brazaoo4/helios/compare/v1.7.0...v1.7.1) (2026-10-28)
 
 
