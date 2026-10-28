@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.6.0](https://github.com/brazaoo4/helios/compare/v1.5.0...v1.6.0) (2026-10-28)
+
+
+### Features
+
+* **onboarding:** add 8-client ecosystem support and server-driven directive drift detection ([90ee80d](https://github.com/brazaoo4/helios/commit/90ee80d70e92d3dedbe3df98e9bc15df2e1e259d))
+
 ## [1.5.0](https://github.com/brazaoo4/helios/compare/v1.4.0...v1.5.0) (2026-10-27)
 
 
