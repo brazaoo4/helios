@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/assets/helios-social-preview.png" alt="Helios - Token-Budgeted, Drift-Aware MCP Memory Engine" width="800">
-
 # ☀️ Helios
 
 **A token-budgeted, drift-aware MCP memory engine for AI coding agents.**
