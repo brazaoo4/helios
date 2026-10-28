@@ -25,8 +25,10 @@ CLIENT_CONFIG_IGNORE_PATTERNS = [
     r"(^|[\\/])(GEMINI|CLAUDE|AGENTS)\.md$",
     r"(^|[\\/])global_rules\.md$",
     r"(^|[\\/])copilot-instructions\.md$",
-    r"(^|[\\/])(mcp|mcp_config|claude_desktop_config|opencode)\.jsonc?$",
+    r"(^|[\\/])(mcp|mcp_config|claude_desktop_config|opencode|hooks)\.jsonc?$",
     r"(^|[\\/])config\.toml$",
+    r"(^|[\\/])helios_guard\.py$",
+    r"(^|[\\/])SKILL\.md$",
 ]
 
 

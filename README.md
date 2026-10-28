@@ -282,8 +282,12 @@ You are connected to Helios, a centralized token-budgeted memory engine.
 
 * **Switch Machine Role (`workstation` ↔ `server-cli`)**:
   *"Run `get_client_setup_bundle(action='switch_role', instance_role='server-cli')` and update my directives."*
-* **Clean Uninstall**:
-  *"Run `get_client_setup_bundle(action='uninstall')` and remove Helios from this machine."*
+* **Clean Conversational Uninstallation**:
+  Simply tell your agent: *"Uninstall Helios from this machine"* (or *"uninstall helios"*). The agent calls `get_client_setup_bundle(action='uninstall')` to safely remove the MCP entry, directive block, `/remember` skill, and cognitive guard hook without clobbering your other custom rules or MCP servers.
+* **Instant Terminal 1-Liner Uninstallation**:
+  - **Linux / macOS (Bash)**: `curl -fsSL https://<your-helios-host>/uninstall.sh | bash`
+  - **Windows (PowerShell)**: `irm https://<your-helios-host>/uninstall.ps1 | iex`
+  - *Selective Client*: Append `?client=cursor`, `?client=vscode`, etc. to uninstall a specific client only.
 
 ---
 
@@ -503,6 +507,9 @@ export_bundle() -> str
 | `GET /setup` | No | AI onboarding guide with non-destructive MCP config snippets. Accepts optional `?token=<key>`. |
 | `GET /setup.sh` | No | 1-liner Linux/macOS Bash client installer (`curl -fsSL <url>/setup.sh \| bash`). |
 | `GET /setup.ps1` | No | 1-liner Windows PowerShell client installer (`irm <url>/setup.ps1 \| iex`). |
+| `GET /uninstall` | No | AI uninstallation guide (`get_client_setup_bundle(action='uninstall')`). Accepts optional `?client=<name>`. |
+| `GET /uninstall.sh` | No | 1-liner Linux/macOS Bash uninstaller (`curl -fsSL <url>/uninstall.sh \| bash`). Accepts optional `?client=<name>`. |
+| `GET /uninstall.ps1` | No | 1-liner Windows PowerShell uninstaller (`irm <url>/uninstall.ps1 \| iex`). Accepts optional `?client=<name>`. |
 | `GET /export/markdown` | Yes (if key set) | Lists generated Markdown scope export files and sizes. |
 | `GET /export/bundle` | Yes (if key set) | Generates and downloads `helios_portable_bundle.tar.gz` (use `curl -sLJO <url>/export/bundle`). |
 | `POST /webhook/git` | HMAC Signature | Universal Git push webhook receiver for `anchor_files` drift detection (1MB streaming cap). |

@@ -100,6 +100,8 @@ from src.onboarding import (
     generate_setup_bash,
     generate_setup_markdown,
     generate_setup_powershell,
+    generate_uninstall_bash,
+    generate_uninstall_powershell,
     resolve_server_base_url,
 )
 from src.seed import ingest_declarative_seed_files, is_db_empty, seed_if_empty
@@ -115,7 +117,8 @@ HELIOS_INSTRUCTIONS = (
     "1. PRE-FLIGHT: Call recall_memories() at the start of any task using the current repo or folder name. "
     "2. STALE PROTOCOL: When a memory is marked [STALE], inspect the referenced anchor_files before acting. "
     "3. UPDATE RULE: If you modify an architecture choice, port, path, or bug fix, call save_memory() or deprecate_memory(). "
-    "4. TOKEN BUDGET: Keep facts atomic (<= 25 words). Never store transient code snippets or secrets."
+    "4. TOKEN BUDGET: Keep facts atomic (<= 25 words). Never store transient code snippets or secrets. "
+    "5. UNINSTALL: If the user requests to uninstall Helios ('uninstall helios'), call get_client_setup_bundle(action='uninstall')."
 )
 transport_security = (
     TransportSecuritySettings(enable_dns_rebinding_protection=False)
@@ -753,7 +756,17 @@ class AuthGateMiddleware:
             return await self.app(scope, receive, send)
 
         path = request.url.path
-        if request.method == "GET" and (path == "/health" or path in ("/setup", "/setup.ps1", "/setup.sh")):
+        if request.method == "GET" and (
+            path == "/health"
+            or path in (
+                "/setup",
+                "/setup.ps1",
+                "/setup.sh",
+                "/uninstall",
+                "/uninstall.ps1",
+                "/uninstall.sh",
+            )
+        ):
             return await self.app(scope, receive, send)
 
         if request.method == "POST" and (path.startswith("/webhook/") or path == "/hooks/git-commit"):
@@ -1172,12 +1185,53 @@ async def setup_bash_script(request: Request) -> Response:
     return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
 
 
+async def uninstall_instructions(request: Request) -> Response:
+    """
+    HTTP GET /uninstall endpoint returning self-contained uninstallation instructions.
+    Supports ?client=all|cursor|antigravity
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    client = request.query_params.get("client", "all")
+    content = generate_client_bundle(client=client, base_url=base_url, action="uninstall")
+    return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+
+
+async def uninstall_powershell_script(request: Request) -> Response:
+    """
+    HTTP GET /uninstall.ps1 endpoint returning an automated 1-liner PowerShell uninstaller.
+    Usage: irm https://<host>/uninstall.ps1 | iex
+    Supports ?client=all|cursor|antigravity
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    client = request.query_params.get("client", "all")
+    script = generate_uninstall_powershell(base_url=base_url, client=client)
+    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+
+
+async def uninstall_bash_script(request: Request) -> Response:
+    """
+    HTTP GET /uninstall.sh endpoint returning an automated 1-liner Bash uninstaller.
+    Usage: curl -fsSL https://<host>/uninstall.sh | bash
+    Supports ?client=all|cursor|antigravity
+    """
+    headers_dict = dict(request.headers)
+    base_url = resolve_server_base_url(headers_dict)
+    client = request.query_params.get("client", "all")
+    script = generate_uninstall_bash(base_url=base_url, client=client)
+    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+
+
 # 6. Assemble Starlette ASGI Application
 starlette_routes = [
     Route("/health", health_check, methods=["GET"]),
     Route("/setup", setup_instructions, methods=["GET"]),
     Route("/setup.ps1", setup_powershell_script, methods=["GET"]),
     Route("/setup.sh", setup_bash_script, methods=["GET"]),
+    Route("/uninstall", uninstall_instructions, methods=["GET"]),
+    Route("/uninstall.ps1", uninstall_powershell_script, methods=["GET"]),
+    Route("/uninstall.sh", uninstall_bash_script, methods=["GET"]),
     Route("/export/bundle", export_bundle_download, methods=["GET"]),
     Route("/export/markdown", list_markdown_exports, methods=["GET"]),
     Route("/webhook/git", git_webhook, methods=["POST"]),
