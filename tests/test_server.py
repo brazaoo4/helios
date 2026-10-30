@@ -856,3 +856,86 @@ def test_auth_gate_middleware_pure_asgi_sse_stream():
         with client.stream("GET", "/sse") as res:
             assert res.status_code == 200
             assert "text/event-stream" in res.headers.get("content-type", "")
+
+
+def test_all_mcp_tools_declare_four_boolean_annotations():
+    tools = mcp._tool_manager.list_tools()
+    assert len(tools) == 10
+
+    expected_annotations = {
+        "recall_memories": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "recall_history": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "get_client_setup_bundle": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "export_bundle": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "save_memory": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "revalidate_memories": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "manage_server_config": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "deprecate_memory": {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        "manage_scope_alias": {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        "manage_git_webhooks": {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    }
+
+    assert {t.name for t in tools} == set(expected_annotations.keys())
+
+    for tool in tools:
+        assert tool.annotations is not None, f"Tool {tool.name} missing annotations"
+        assert isinstance(tool.annotations.readOnlyHint, bool), f"{tool.name}.readOnlyHint is not bool"
+        assert isinstance(tool.annotations.destructiveHint, bool), f"{tool.name}.destructiveHint is not bool"
+        assert isinstance(tool.annotations.idempotentHint, bool), f"{tool.name}.idempotentHint is not bool"
+        assert isinstance(tool.annotations.openWorldHint, bool), f"{tool.name}.openWorldHint is not bool"
+
+        expected = expected_annotations[tool.name]
+        assert tool.annotations.readOnlyHint is expected["readOnlyHint"]
+        assert tool.annotations.destructiveHint is expected["destructiveHint"]
+        assert tool.annotations.idempotentHint is expected["idempotentHint"]
+        assert tool.annotations.openWorldHint is expected["openWorldHint"]

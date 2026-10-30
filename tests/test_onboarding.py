@@ -319,11 +319,12 @@ def test_setup_scripts_backtick_and_injection_safety():
     assert "VS Code MCP registered" in ps_script
     assert "OpenCode MCP registered" in ps_script
 
-    # 2. Bash setup script uses single-quoted heredocs and python env pass-through
+    # 2. Bash setup script uses single-quoted heredocs and python args pass-through
     sh_script = generate_setup_bash("https://helios.example.com", query_token="my-token+123")
     assert "cat <<'HELIOS_DIRECTIVE_EOF'" in sh_script
     assert "cat <<'HELIOS_SKILL_EOF'" in sh_script
-    assert "python3 - <<'PYEOF'" in sh_script
+    assert "python3 - " in sh_script
+    assert "<<'PYEOF'" in sh_script
     assert "lambda _: directive" in sh_script
     assert "`anchor_files`" in sh_script
     assert "recall_memories(" in sh_script
@@ -506,4 +507,84 @@ def test_bash_uninstall_execution_cleans_helios_and_preserves_user_configs(tmp_p
     c_text = codex_toml.read_text()
     assert "[mcp_servers.my_custom_server]" in c_text
     assert "[mcp_servers.helios]" not in c_text
+
+
+def test_bash_setup_execution_in_temp_home_and_no_os_environ(tmp_path, monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    # Verify zero os.environ or os.getenv inside src/onboarding.py
+    onboarding_source = Path("src/onboarding.py").read_text(encoding="utf-8")
+    assert "os.environ" not in onboarding_source
+    assert "os.getenv" not in onboarding_source
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    # Pre-create client directories to test auto-detection and multi-client configuration
+    (fake_home / ".codex").mkdir(parents=True)
+    (fake_home / ".codeium" / "windsurf").mkdir(parents=True)
+    (fake_home / ".config" / "opencode").mkdir(parents=True)
+
+    # Verify no os.environ or os.getenv in the generated script
+    sh_script = generate_setup_bash("https://helios.example.com", client="all")
+    assert "os.environ" not in sh_script
+    assert "os.getenv" not in sh_script
+
+    # Execute generated setup script in temporary HOME
+    script_path = tmp_path / "setup.sh"
+    script_path.write_text(sh_script, encoding="utf-8")
+
+    proc = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, check=True)
+    assert proc.returncode == 0
+
+    # 1. Antigravity MCP config & directive & remember skill & guard hook
+    gemini_cfg = fake_home / ".gemini" / "config"
+    mcp_file = gemini_cfg / "mcp_config.json"
+    assert mcp_file.exists()
+    mcp_data = json.loads(mcp_file.read_text(encoding="utf-8"))
+    assert mcp_data["mcpServers"]["helios"]["url"] == "https://helios.example.com/mcp"
+
+    gemini_md = gemini_cfg / "GEMINI.md"
+    assert gemini_md.exists()
+    assert "<!-- HELIOS:START -->" in gemini_md.read_text(encoding="utf-8")
+
+    skill_file = fake_home / ".gemini" / "skills" / "remember" / "SKILL.md"
+    assert skill_file.exists()
+    assert "name: remember" in skill_file.read_text(encoding="utf-8")
+
+    guard_script = gemini_cfg / "scripts" / "helios_guard.py"
+    assert guard_script.exists()
+
+    hooks_file = gemini_cfg / "hooks.json"
+    assert hooks_file.exists()
+    hooks_data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    assert "helios-write-through-guard" in hooks_data
+
+    # 2. Cursor MCP & directive rule
+    cursor_mcp = fake_home / ".cursor" / "mcp.json"
+    assert cursor_mcp.exists()
+    cursor_data = json.loads(cursor_mcp.read_text(encoding="utf-8"))
+    assert cursor_data["mcpServers"]["helios"]["url"] == "https://helios.example.com/sse"
+
+    cursor_rule = fake_home / ".cursor" / "rules" / "helios.mdc"
+    assert cursor_rule.exists()
+    assert "<!-- HELIOS:START -->" in cursor_rule.read_text(encoding="utf-8")
+
+    # 3. Codex config.toml & AGENTS.md
+    codex_toml = fake_home / ".codex" / "config.toml"
+    assert codex_toml.exists()
+    assert "[mcp_servers.helios]" in codex_toml.read_text(encoding="utf-8")
+    assert (fake_home / ".codex" / "AGENTS.md").exists()
+
+    # 4. Windsurf config & global_rules.md
+    windsurf_mcp = fake_home / ".codeium" / "windsurf" / "mcp_config.json"
+    assert windsurf_mcp.exists()
+    assert (fake_home / ".codeium" / "windsurf" / "memories" / "global_rules.md").exists()
+
+    # 5. OpenCode opencode.json & AGENTS.md
+    opencode_json = fake_home / ".config" / "opencode" / "opencode.json"
+    assert opencode_json.exists()
+    assert (fake_home / ".config" / "opencode" / "AGENTS.md").exists()
 

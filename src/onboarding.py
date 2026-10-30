@@ -993,10 +993,10 @@ HELIOS_DIRECTIVE_EOF
 inject_directive() {{
     local target_path="$1"
     mkdir -p "$(dirname "$target_path")"
-    TARGET_PATH="$target_path" DIRECTIVE="$DIRECTIVE_CONTENT" python3 - <<'PYEOF'
-import os, re
-path = os.environ["TARGET_PATH"]
-directive = os.environ["DIRECTIVE"]
+    python3 - "$target_path" "$DIRECTIVE_CONTENT" <<'PYEOF'
+import os, re, sys
+path = sys.argv[1]
+directive = sys.argv[2]
 if os.path.exists(path):
     real_path = os.path.realpath(path)
     with open(real_path, 'r', encoding='utf-8') as f:
@@ -1022,11 +1022,12 @@ PYEOF
 CONFIG_DIR="$HOME/.gemini/config"
 mkdir -p "$CONFIG_DIR"
 MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
+MCP_URL="{mcp_url}"
 
-MCP_CONFIG="$MCP_CONFIG" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["MCP_CONFIG"]
-mcp_url = os.environ["MCP_URL"]
+python3 - "$MCP_CONFIG" "$MCP_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+mcp_url = sys.argv[2]
 data = {{'mcpServers': {{}}}}
 if os.path.exists(path):
     try:
@@ -1047,10 +1048,11 @@ CURSOR_DIR="$HOME/.cursor"
 if [ -d "$CURSOR_DIR" ] || [ "{client_norm}" = "cursor" ] || [ "{client_norm}" = "all" ]; then
     mkdir -p "$CURSOR_DIR"
     CURSOR_MCP="$CURSOR_DIR/mcp.json"
-    CURSOR_MCP="$CURSOR_MCP" SSE_URL="{sse_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["CURSOR_MCP"]
-sse_url = os.environ["SSE_URL"]
+    SSE_URL="{sse_url}"
+    python3 - "$CURSOR_MCP" "$SSE_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+sse_url = sys.argv[2]
 data = {{'mcpServers': {{}}}}
 if os.path.exists(path):
     try:
@@ -1074,10 +1076,11 @@ for CLAUDE_BASE in "$HOME/.config/Claude" "$HOME/Library/Application Support/Cla
     if [ -d "$CLAUDE_BASE" ] || [ "{client_norm}" = "claude-desktop" ]; then
         mkdir -p "$CLAUDE_BASE"
         CLAUDE_MCP="$CLAUDE_BASE/claude_desktop_config.json"
-        CLAUDE_MCP="$CLAUDE_MCP" SSE_URL="{sse_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["CLAUDE_MCP"]
-sse_url = os.environ["SSE_URL"]
+        SSE_URL="{sse_url}"
+        python3 - "$CLAUDE_MCP" "$SSE_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+sse_url = sys.argv[2]
 data = {{'mcpServers': {{}}}}
 if os.path.exists(path):
     try:
@@ -1111,10 +1114,11 @@ CODEX_DIR="$HOME/.codex"
 if [ -d "$CODEX_DIR" ] || command -v codex >/dev/null 2>&1 || [ "{client_norm}" = "codex" ]; then
     mkdir -p "$CODEX_DIR"
     CODEX_TOML="$CODEX_DIR/config.toml"
-    CODEX_TOML="$CODEX_TOML" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
-import os, re
-path = os.environ["CODEX_TOML"]
-mcp_url = os.environ["MCP_URL"]
+    MCP_URL="{mcp_url}"
+    python3 - "$CODEX_TOML" "$MCP_URL" <<'PYEOF'
+import os, re, sys
+path = sys.argv[1]
+mcp_url = sys.argv[2]
 block = f"[mcp_servers.helios]\\nurl = \\"{mcp_url}\\"\\n"
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -1139,10 +1143,11 @@ WINDSURF_DIR="$HOME/.codeium/windsurf"
 if [ -d "$WINDSURF_DIR" ] || [ "{client_norm}" = "windsurf" ]; then
     mkdir -p "$WINDSURF_DIR"
     WINDSURF_MCP="$WINDSURF_DIR/mcp_config.json"
-    WINDSURF_MCP="$WINDSURF_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["WINDSURF_MCP"]
-mcp_url = os.environ["MCP_URL"]
+    MCP_URL="{mcp_url}"
+    python3 - "$WINDSURF_MCP" "$MCP_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+mcp_url = sys.argv[2]
 data = {{'mcpServers': {{}}}}
 if os.path.exists(path):
     try:
@@ -1166,10 +1171,11 @@ for VSCODE_BASE in "$HOME/.config/Code/User" "$HOME/Library/Application Support/
     if [ -d "$VSCODE_BASE" ] || [ "{client_norm}" = "vscode" ]; then
         mkdir -p "$VSCODE_BASE"
         VSCODE_MCP="$VSCODE_BASE/mcp.json"
-        VSCODE_MCP="$VSCODE_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["VSCODE_MCP"]
-mcp_url = os.environ["MCP_URL"]
+        MCP_URL="{mcp_url}"
+        python3 - "$VSCODE_MCP" "$MCP_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+mcp_url = sys.argv[2]
 data = {{'servers': {{}}}}
 if os.path.exists(path):
     try:
@@ -1195,10 +1201,11 @@ OPENCODE_DIR="$HOME/.config/opencode"
 if [ -d "$OPENCODE_DIR" ] || command -v opencode >/dev/null 2>&1 || [ "{client_norm}" = "opencode" ]; then
     mkdir -p "$OPENCODE_DIR"
     OPENCODE_MCP="$OPENCODE_DIR/opencode.json"
-    OPENCODE_MCP="$OPENCODE_MCP" MCP_URL="{mcp_url}" python3 - <<'PYEOF'
-import json, os
-path = os.environ["OPENCODE_MCP"]
-mcp_url = os.environ["MCP_URL"]
+    MCP_URL="{mcp_url}"
+    python3 - "$OPENCODE_MCP" "$MCP_URL" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
+mcp_url = sys.argv[2]
 data = {{'$schema': 'https://opencode.ai/config.json', 'mcp': {{}}}}
 if os.path.exists(path):
     try:
@@ -1239,9 +1246,9 @@ HELIOS_GUARD_EOF
 chmod +x "$SCRIPTS_DIR/helios_guard.py"
 
 HOOKS_PATH="$CONFIG_DIR/hooks.json"
-HOOKS_PATH="$HOOKS_PATH" python3 - <<'PYEOF'
-import json, os
-path = os.environ["HOOKS_PATH"]
+python3 - "$HOOKS_PATH" <<'PYEOF'
+import json, os, sys
+path = sys.argv[1]
 data = {{}}
 if os.path.exists(path):
     try:
@@ -1485,9 +1492,9 @@ echo "Uninstalling Helios client configuration (client: {client_norm})..."
 strip_directive() {{
     local target_path="$1"
     if [ -f "$target_path" ]; then
-        TARGET_PATH="$target_path" python3 - <<'PYEOF'
-import os, re
-target_path = os.environ["TARGET_PATH"]
+        python3 - "$target_path" <<'PYEOF'
+import os, re, sys
+target_path = sys.argv[1]
 real_path = os.path.realpath(target_path)
 with open(real_path, 'r', encoding='utf-8') as f:
     content = f.read()
@@ -1509,9 +1516,9 @@ if [ "{client_norm}" = "antigravity" ] || [ "{client_norm}" = "all" ]; then
     CONFIG_DIR="$HOME/.gemini/config"
     MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
     if [ -f "$MCP_CONFIG" ]; then
-        MCP_CONFIG="$MCP_CONFIG" python3 - <<'PYEOF'
-import json, os
-mcp_path = os.environ["MCP_CONFIG"]
+        python3 - "$MCP_CONFIG" <<'PYEOF'
+import json, sys
+mcp_path = sys.argv[1]
 try:
     with open(mcp_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1529,9 +1536,9 @@ PYEOF
     # Guard Hook
     HOOKS_PATH="$CONFIG_DIR/hooks.json"
     if [ -f "$HOOKS_PATH" ]; then
-        HOOKS_PATH="$HOOKS_PATH" python3 - <<'PYEOF'
-import json, os
-hooks_path = os.environ["HOOKS_PATH"]
+        python3 - "$HOOKS_PATH" <<'PYEOF'
+import json, sys
+hooks_path = sys.argv[1]
 try:
     with open(hooks_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1553,9 +1560,9 @@ fi
 if [ "{client_norm}" = "cursor" ] || [ "{client_norm}" = "all" ]; then
     CURSOR_MCP="$HOME/.cursor/mcp.json"
     if [ -f "$CURSOR_MCP" ]; then
-        CURSOR_MCP="$CURSOR_MCP" python3 - <<'PYEOF'
-import json, os
-cursor_path = os.environ["CURSOR_MCP"]
+        python3 - "$CURSOR_MCP" <<'PYEOF'
+import json, sys
+cursor_path = sys.argv[1]
 try:
     with open(cursor_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1576,9 +1583,9 @@ if [ "{client_norm}" = "claude-desktop" ] || [ "{client_norm}" = "claude-code" ]
     for CLAUDE_BASE in "$HOME/.config/Claude" "$HOME/Library/Application Support/Claude"; do
         CLAUDE_MCP="$CLAUDE_BASE/claude_desktop_config.json"
         if [ -f "$CLAUDE_MCP" ]; then
-            CLAUDE_MCP="$CLAUDE_MCP" python3 - <<'PYEOF'
-import json, os
-claude_path = os.environ["CLAUDE_MCP"]
+            python3 - "$CLAUDE_MCP" <<'PYEOF'
+import json, sys
+claude_path = sys.argv[1]
 try:
     with open(claude_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1603,9 +1610,9 @@ fi
 if [ "{client_norm}" = "codex" ] || [ "{client_norm}" = "all" ]; then
     CODEX_TOML="$HOME/.codex/config.toml"
     if [ -f "$CODEX_TOML" ]; then
-        CODEX_TOML="$CODEX_TOML" python3 - <<'PYEOF'
-import os, re
-codex_path = os.environ["CODEX_TOML"]
+        python3 - "$CODEX_TOML" <<'PYEOF'
+import os, re, sys
+codex_path = sys.argv[1]
 try:
     with open(codex_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -1628,9 +1635,9 @@ fi
 if [ "{client_norm}" = "windsurf" ] || [ "{client_norm}" = "all" ]; then
     WINDSURF_MCP="$HOME/.codeium/windsurf/mcp_config.json"
     if [ -f "$WINDSURF_MCP" ]; then
-        WINDSURF_MCP="$WINDSURF_MCP" python3 - <<'PYEOF'
-import json, os
-windsurf_path = os.environ["WINDSURF_MCP"]
+        python3 - "$WINDSURF_MCP" <<'PYEOF'
+import json, sys
+windsurf_path = sys.argv[1]
 try:
     with open(windsurf_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1651,9 +1658,9 @@ if [ "{client_norm}" = "vscode" ] || [ "{client_norm}" = "all" ]; then
     for VSCODE_BASE in "$HOME/.config/Code/User" "$HOME/Library/Application Support/Code/User"; do
         VSCODE_MCP="$VSCODE_BASE/mcp.json"
         if [ -f "$VSCODE_MCP" ]; then
-            VSCODE_MCP="$VSCODE_MCP" python3 - <<'PYEOF'
-import json, os
-vscode_path = os.environ["VSCODE_MCP"]
+            python3 - "$VSCODE_MCP" <<'PYEOF'
+import json, sys
+vscode_path = sys.argv[1]
 try:
     with open(vscode_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -1674,9 +1681,9 @@ fi
 if [ "{client_norm}" = "opencode" ] || [ "{client_norm}" = "all" ]; then
     OPENCODE_MCP="$HOME/.config/opencode/opencode.json"
     if [ -f "$OPENCODE_MCP" ]; then
-        OPENCODE_MCP="$OPENCODE_MCP" python3 - <<'PYEOF'
-import json, os
-opencode_path = os.environ["OPENCODE_MCP"]
+        python3 - "$OPENCODE_MCP" <<'PYEOF'
+import json, sys
+opencode_path = sys.argv[1]
 try:
     with open(opencode_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
