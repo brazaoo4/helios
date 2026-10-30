@@ -342,6 +342,8 @@ sequenceDiagram
 
 ## 🏗️ 4. System Architecture
 
+For the complete technical specification, package breakdown, and request lifecycle diagrams, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ```mermaid
 flowchart TD
     subgraph Clients["AI Clients & IDEs"]
@@ -406,7 +408,7 @@ flowchart LR
 
 ## 🛠️ 5. MCP Tools Reference
 
-Helios exposes 10 FastMCP tools with strict Pydantic field descriptions and worker-thread offloading:
+Helios exposes 10 FastMCP tools with strict Pydantic field descriptions, worker-thread offloading via `anyio.to_thread.run_sync`, and explicit `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) meeting MCP Directory and OpenAI directory static safety standards:
 
 | Tool | Key Parameters | Purpose |
 | :--- | :--- | :--- |
@@ -532,6 +534,8 @@ In addition to selective per-repo activation via `manage_git_webhooks`, you can 
 
 ## 🧪 7. Testing & Local Development
 
+The test suite is modularized to mirror application packages (`tests/middleware/`, `tests/routes/`, `tests/tools/`) with centralized environment isolation in `tests/conftest.py`:
+
 ```bash
 # Set up virtual environment
 python3 -m venv .venv
@@ -542,7 +546,12 @@ pip install -r requirements-dev.txt
 
 # Run linter & complete test suite
 ruff check src/ tests/
-pytest tests/ -q
+pytest tests/ -v
+
+# Or run targeted sub-suites
+pytest tests/middleware/ -v
+pytest tests/routes/ -v
+pytest tests/tools/ -v
 
 # Validate declarative seed fact invariants
 python -m src.seed --check
