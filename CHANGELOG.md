@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.3](https://github.com/brazaoo4/helios/compare/v1.8.2...v1.8.3) (2026-10-30)
+
+
+### Performance Improvements
+
+* **ci:** accelerate multi-arch container builds and isolate buildx cache scopes ([34c9fa0](https://github.com/brazaoo4/helios/commit/34c9fa03010efda2e4ea2aeec18fb28883b29073))
+* **ci:** accelerate multi-arch container builds and isolate buildx cache scopes ([b70340d](https://github.com/brazaoo4/helios/commit/b70340dc20956f244ec5280459ff30d7e0e2c8a7))
+
 ## [1.8.2](https://github.com/brazaoo4/helios/compare/v1.8.1...v1.8.2) (2026-10-30)
 
 
