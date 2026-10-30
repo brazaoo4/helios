@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.4](https://github.com/brazaoo4/helios/compare/v1.7.3...v1.7.4) (2026-10-30)
+
+
+### Documentation
+
+* add system architecture specification and update repository layout docs ([8931429](https://github.com/brazaoo4/helios/commit/89314297ee2cc1b9836eab81b9967023b96a46ea))
+* add system architecture specification and update repository layout docs ([73614e9](https://github.com/brazaoo4/helios/commit/73614e98df79e29d9a5996b3029e923529a94803))
+
 ## [1.7.3](https://github.com/brazaoo4/helios/compare/v1.7.2...v1.7.3) (2026-10-30)
 
 
