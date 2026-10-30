@@ -3,7 +3,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from src.db import init_db, set_alias, upsert_memory
+from src.db import set_alias, upsert_memory
 from src.server import manage_git_webhooks
 from src.webhooks import (
     disable_repo_webhooks,
@@ -14,18 +14,6 @@ from src.webhooks import (
     match_helios_scope,
     normalize_api_url,
 )
-
-
-@pytest.fixture(autouse=True)
-def setup_webhook_test_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("HELIOS_GIT_PROVIDER", raising=False)
-    monkeypatch.delenv("HELIOS_GIT_API_URL", raising=False)
-    monkeypatch.delenv("HELIOS_GIT_TOKEN", raising=False)
-    monkeypatch.delenv("HELIOS_GIT_OWNER", raising=False)
-    monkeypatch.delenv("HELIOS_WEBHOOK_URL", raising=False)
-    monkeypatch.delenv("HELIOS_WEBHOOK_SECRET", raising=False)
-    init_db()
 
 
 def test_normalize_api_url():

@@ -60,7 +60,7 @@ INITIAL_FACTS = [
         "category": "fact",
         "subject": "mcp-transport",
         "content": "Helios MCP exposes Streamable HTTP on /sse and /mcp, with standard SSE support for clients like Claude Desktop.",
-        "anchor_files": ["src/server.py"],
+        "anchor_files": ["src/server.py", "src/middleware/transport.py"],
     },
     {
         "scope": "helios",

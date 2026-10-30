@@ -1,5 +1,5 @@
 import json
-import pytest
+
 from starlette.testclient import TestClient
 
 from src import __version__
@@ -18,13 +18,6 @@ from src.onboarding import (
     resolve_server_base_url,
 )
 from src.server import app, get_client_setup_bundle
-
-
-@pytest.fixture(autouse=True)
-def setup_onboarding_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("HELIOS_PUBLIC_URL", raising=False)
-    monkeypatch.delenv("HELIOS_API_KEY", raising=False)
 
 
 def test_resolve_server_base_url(monkeypatch):
