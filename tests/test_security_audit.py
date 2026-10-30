@@ -1,22 +1,17 @@
 """Security regression tests verifying all white-box audit remediations (HEL-01 to HEL-14)."""
 
-import io
 import sqlite3
 import tarfile
+
 import pytest
 from starlette.testclient import TestClient
 
 from src.config import (
-    LOCKED_SECURITY_KEYS,
-    get_allowed_origins,
     validate_http_url,
-    validate_setting_value,
 )
 from src.db import (
-    db_prune_memories,
     flag_stale_by_files,
     get_connection,
-    list_aliases,
     revalidate_memories,
     set_alias,
     set_runtime_setting,
@@ -36,7 +31,6 @@ from src.onboarding import (
 )
 from src.server import app
 from src.tools.config import manage_server_config
-
 
 # --- HEL-01: Shell / PowerShell Injection Prevention ---
 

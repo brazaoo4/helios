@@ -64,6 +64,7 @@ from src.webhooks import (
     list_repo_webhooks,
 )
 
+
 class DynamicCORSMiddleware(CORSMiddleware):
     """Dynamic CORS middleware resolving allowed origins at request time."""
 
