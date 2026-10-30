@@ -23,6 +23,7 @@ try:
     from mcp.server.fastmcp import FastMCP
     from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
     from mcp.server.sse import TransportSecuritySettings
+    from mcp.types import ToolAnnotations
 except ImportError:
     try:
         from fastmcp import FastMCP
@@ -31,6 +32,16 @@ except ImportError:
         FastMCP = None
         FuncMetadata = None
     TransportSecuritySettings = None
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:
+        from pydantic import BaseModel
+
+        class ToolAnnotations(BaseModel):  # type: ignore[no-redef]
+            readOnlyHint: bool = False
+            destructiveHint: bool = False
+            idempotentHint: bool = False
+            openWorldHint: bool = False
 
 # Offload sync FastMCP tools to worker thread via anyio.to_thread.run_sync during async MCP calls
 if FuncMetadata is not None and not getattr(FuncMetadata, "_helios_offloaded", False):
@@ -213,7 +224,14 @@ COLD_START_ONBOARDING_NOTICE = (
 
 
 # 2. FastMCP Tool Definitions
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def recall_memories(
     scope: Annotated[str, Field(default="global", description="Project, repository, or directory name (e.g., 'homelab', 'ticketera', 'global').")] = "global",
     query: Annotated[str, Field(default="", description="Natural language search query or keywords to match via FTS5 BM25.")] = "",
@@ -269,7 +287,14 @@ def recall_memories(
         return f"Error recalling memories: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def save_memory(
     scope: Annotated[str, Field(description="Project, repository, or directory name (e.g., 'homelab', 'ticketera', 'global').")],
     category: Annotated[Literal["rule", "fact", "preference", "episodic"], Field(description="Memory classification: 'rule' (guardrails), 'fact' (architecture/ports), 'preference' (style), 'episodic' (temporary 14d notes).")],
@@ -304,7 +329,14 @@ def save_memory(
         return f"Error saving memory: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def deprecate_memory(
     memory_id: Annotated[int, Field(description="Integer ID of the active or stale memory to retire/archive.")],
     reason: Annotated[str, Field(default="", description="Reason for deprecating the memory (e.g., 'replaced by microservice', 'obsolete config').")] = "",
@@ -320,7 +352,14 @@ def deprecate_memory(
         return f"Error deprecating memory: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def recall_history(
     scope: Annotated[str, Field(default="global", description="Project, repository, or directory name to retrieve historical audit trail for.")] = "global",
     limit: Annotated[int, Field(default=10, ge=1, le=25, description="Maximum number of historical records to return (capped at 25).")] = 10,
@@ -359,7 +398,14 @@ def recall_history(
         return f"Error retrieving history: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def revalidate_memories(
     memory_ids: Annotated[list[int], Field(description="List of stale memory IDs to revalidate and mark back as 'active'.")],
 ) -> str:
@@ -386,7 +432,14 @@ def revalidate_memories(
         return f"Error revalidating memories: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def export_bundle() -> str:
     """
     Generate a complete, portable archive snapshot (helios_portable_bundle.tar.gz)
@@ -400,7 +453,14 @@ def export_bundle() -> str:
         return f"Error generating export bundle: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 def manage_scope_alias(
     alias: Annotated[str, Field(default="", description="Source alias or folder name (e.g., 'ticket-tracker').")] = "",
     canonical_scope: Annotated[str, Field(default="", description="Target canonical scope name (e.g., 'ticketera').")] = "",
@@ -460,7 +520,14 @@ def manage_scope_alias(
         return f"Error managing scope alias: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def manage_git_webhooks(
     action: Annotated[
         Literal["list", "enable", "disable"],
@@ -562,7 +629,14 @@ def manage_git_webhooks(
         return f"Error managing git webhooks: {exc}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def manage_server_config(
     action: Annotated[
         Literal["list", "set", "reset"],
@@ -654,7 +728,14 @@ def manage_server_config(
         return f"Invalid action '{action}'. Must be 'list', 'set', or 'reset'."
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 def get_client_setup_bundle(
     client: Annotated[
         Literal[
