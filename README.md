@@ -10,6 +10,7 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-Streamable%20HTTP%20%26%20SSE-emerald.svg)](https://modelcontextprotocol.io/)
 [![Storage](https://img.shields.io/badge/SQLite-WAL%20%2B%20FTS5%20BM25-informational.svg)](https://www.sqlite.org/fts5.html)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![M8ven Score](https://m8ven.ai/badge/mcp/brazaoo4-helios-1xvvth?v=8419dd4517449191a68db28e92625ad7)](https://m8ven.ai/mcp/brazaoo4-helios-1xvvth?s=readme)
 
 *Built for personal use across homelab services and multiple workstations. Open-sourced if you find it helpful.*
 
