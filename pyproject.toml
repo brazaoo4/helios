@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "helios-mcp"
-version = "1.7.2"
+version = "1.7.3"
 description = "Token-budgeted, drift-aware Model Context Protocol (MCP) memory engine backed by SQLite WAL and FTS5 BM25."
 readme = "README.md"
 requires-python = ">=3.12"
