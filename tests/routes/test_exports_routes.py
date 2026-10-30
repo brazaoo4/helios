@@ -29,3 +29,23 @@ def test_export_http_endpoints():
             names = tar.getnames()
             assert "memory.db" in names
             assert any(n.startswith("exports") for n in names)
+
+
+def test_export_endpoints_edge_cases(monkeypatch, tmp_path):
+    import src.routes.exports as exp_mod
+
+    # 1. Non-existent export directory returns empty list
+    non_existent = tmp_path / "does_not_exist"
+    monkeypatch.setattr(exp_mod, "get_export_dir", lambda: non_existent)
+    assert exp_mod._scan_markdown_exports() == []
+
+    # 2. Bundle generation error returns 500
+    def _broken_bundle():
+        raise RuntimeError("Disk full")
+
+    monkeypatch.setattr(exp_mod, "create_portable_archive", _broken_bundle)
+    with TestClient(app) as client:
+        res = client.get("/export/bundle")
+        assert res.status_code == 500
+        assert "Disk full" in res.json()["message"]
+

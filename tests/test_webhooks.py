@@ -269,3 +269,81 @@ def test_enable_repo_webhooks_single_name_fallback_and_url_encoding(monkeypatch)
         assert "my repo+v1" in res["enabled"]
         # Ensure owner "braz" was prepended and repo name was URL-encoded in the API path
         assert any("/repos/braz/my%20repo%2Bv1/hooks" in u for u in called_urls)
+
+
+def test_webhooks_gitlab_and_disable_lifecycle(monkeypatch):
+    from src.webhooks import (
+        _get_authenticated_user,
+        disable_repo_webhooks,
+        enable_repo_webhooks,
+        fetch_candidate_repositories,
+    )
+
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "gitlab")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "gl-token-123")
+    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "https://helios.example.com/webhook/git")
+
+    # 1. Validation checks when params missing
+    with pytest.raises(ValueError, match="No repositories specified"):
+        enable_repo_webhooks(repos=[])
+    with pytest.raises(ValueError, match="No repositories specified"):
+        disable_repo_webhooks(repos=[])
+
+    # 2. _get_authenticated_user test
+    class MockUserResp:
+        status_code = 200
+        def json(self):
+            return {"username": "gitlab-user"}
+
+    with patch("httpx.Client.get", return_value=MockUserResp()):
+        with httpx.Client() as client:
+            user = _get_authenticated_user(client, "gitlab", "https://gitlab.example.com/api/v4")
+            assert user == "gitlab-user"
+
+    # 3. fetch_candidate_repositories with GitLab
+    class MockProjectsResp:
+        status_code = 200
+        def json(self):
+            return [
+                {
+                    "name": "my-project",
+                    "path_with_namespace": "my-group/my-project",
+                    "namespace": {"path": "my-group"},
+                    "forked_from_project": None,
+                    "archived": False,
+                    "id": 101,
+                }
+            ]
+
+    with httpx.Client() as client:
+        with patch.object(client, "get", return_value=MockProjectsResp()):
+            repos = fetch_candidate_repositories(
+                client,
+                provider="gitlab",
+                api_url="https://gitlab.example.com/api/v4",
+                target_owner="my-group",
+            )
+            assert len(repos) == 1
+            assert repos[0]["full_name"] == "my-group/my-project"
+
+    # 4. enable_repo_webhooks and disable_repo_webhooks on GitLab
+    class MockHooksList:
+        status_code = 200
+        def json(self):
+            return [{"id": 55, "url": "https://helios.example.com/webhook/git"}]
+
+    class MockDeleteResp:
+        status_code = 204
+        text = ""
+
+    with patch("httpx.Client.get", return_value=MockHooksList()):
+        # Already enabled
+        res_already = enable_repo_webhooks(repos=["my-group/my-project"])
+        assert "my-group/my-project" in res_already["already_enabled"]
+
+        # Disable
+        with patch("httpx.Client.delete", return_value=MockDeleteResp()):
+            res_dis = disable_repo_webhooks(repos=["my-group/my-project"])
+            assert "my-group/my-project" in res_dis["disabled"]
+

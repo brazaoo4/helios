@@ -9,3 +9,7 @@ data/
 .env
 .pytest_cache/
 .history
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

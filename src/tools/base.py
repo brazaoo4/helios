@@ -10,7 +10,7 @@ try:
     from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
     from mcp.server.sse import TransportSecuritySettings
     from mcp.types import ToolAnnotations
-except ImportError:
+except ImportError:  # pragma: no cover
     try:
         from fastmcp import FastMCP
         from fastmcp.utilities.func_metadata import FuncMetadata

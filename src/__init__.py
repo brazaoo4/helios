@@ -12,13 +12,13 @@ def _resolve_version() -> str:
             match = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
             if match:
                 return match.group(1)
-        except Exception:
+        except Exception:  # pragma: no cover
             pass
-    try:
+    try:  # pragma: no cover
         from importlib.metadata import version
 
         return version("helios-mcp")
-    except Exception:
+    except Exception:  # pragma: no cover
         return "1.0.0"
 
 

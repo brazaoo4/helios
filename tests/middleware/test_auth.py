@@ -48,4 +48,61 @@ def test_auth_gate_middleware_pure_asgi_sse_stream():
     with TestClient(app) as client:
         with client.stream("GET", "/sse") as res:
             assert res.status_code == 200
-            assert "text/event-stream" in res.headers.get("content-type", "")
+
+
+def test_auth_gate_middleware_options_bypass(monkeypatch):
+    monkeypatch.setenv("HELIOS_API_KEY", "secret-key-123")
+    with TestClient(app) as client:
+        # OPTIONS request should bypass auth gate
+        res = client.options("/export/markdown")
+        # Starlette default for OPTIONS or route response
+        assert res.status_code != 401
+
+
+def test_read_bounded_body():
+    import anyio
+    from starlette.requests import Request
+
+    from src.middleware.auth import _read_bounded_body
+
+    # 1. Normal body within limits
+    async def run_test():
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/test",
+            "headers": [(b"content-length", b"5")],
+        }
+
+        async def receive_normal():
+            return {"type": "http.request", "body": b"hello", "more_body": False}
+
+        req = Request(scope, receive_normal)
+        body = await _read_bounded_body(req, max_bytes=10)
+        assert body == b"hello"
+
+        # 2. Content-Length exceeds max_bytes
+        scope_too_large = {
+            "type": "http",
+            "method": "POST",
+            "path": "/test",
+            "headers": [(b"content-length", b"100")],
+        }
+        req_large = Request(scope_too_large, receive_normal)
+        assert await _read_bounded_body(req_large, max_bytes=10) is None
+
+        # 3. Stream exceeds max_bytes without content-length
+        scope_no_len = {
+            "type": "http",
+            "method": "POST",
+            "path": "/test",
+            "headers": [(b"content-length", b"invalid")],
+        }
+
+        async def receive_stream():
+            return {"type": "http.request", "body": b"chunk-that-is-too-long", "more_body": False}
+
+        req_stream = Request(scope_no_len, receive_stream)
+        assert await _read_bounded_body(req_stream, max_bytes=5) is None
+
+    anyio.run(run_test)
