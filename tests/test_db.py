@@ -25,24 +25,6 @@ from src.db import (
     upsert_memory,
 )
 
-
-@pytest.fixture(autouse=True)
-def setup_test_db(tmp_path, monkeypatch):
-    """
-    Runs automatically before every test:
-    Points MEMORY_DATA_DIR to a temporary directory isolated to that test,
-    then initializes a clean database.
-    """
-    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("HELIOS_WORD_LIMIT", raising=False)
-    monkeypatch.delenv("HELIOS_EPISODIC_TTL_DAYS", raising=False)
-    monkeypatch.delenv("HELIOS_CHANGELOG_LIMIT", raising=False)
-    monkeypatch.delenv("HELIOS_API_KEY", raising=False)
-    monkeypatch.delenv("HELIOS_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("HELIOS_ALLOWED_ORIGINS", raising=False)
-    init_db()
-
-
 # --- 2.0: Centralized Config & Environment Bounds ---
 
 def test_config_defaults_and_dynamic_env(monkeypatch, tmp_path):

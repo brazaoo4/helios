@@ -5,7 +5,6 @@ import pytest
 
 from src.db import (
     get_connection,
-    init_db,
     query_memories,
     resolve_scope,
     set_alias,
@@ -21,13 +20,6 @@ from src.seed import (
     seed_if_empty,
     validate_facts,
 )
-
-
-@pytest.fixture(autouse=True)
-def setup_test_db(tmp_path, monkeypatch):
-    """Isolate each test in a clean temporary data directory."""
-    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path))
-    init_db()
 
 
 def test_initial_facts_comply_with_all_invariants():

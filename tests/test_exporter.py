@@ -2,12 +2,9 @@ import sqlite3
 import tarfile
 from pathlib import Path
 
-import pytest
-
 from src.db import (
     flag_stale_by_files,
     get_connection,
-    init_db,
     migrate_scope,
     set_alias,
     upsert_memory,
@@ -20,17 +17,6 @@ from src.exporter import (
     sanitize_filename,
     sync_markdown_exports,
 )
-
-
-@pytest.fixture(autouse=True)
-def setup_test_exporter_env(tmp_path, monkeypatch):
-    """
-    Runs before every test:
-    Isolates MEMORY_DATA_DIR to a temporary folder and initializes the DB.
-    """
-    monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path))
-    init_db()
-
 
 # --- 1. Helper Functions ---
 
