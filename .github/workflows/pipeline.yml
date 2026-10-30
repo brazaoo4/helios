@@ -59,8 +59,8 @@ jobs:
           push: false
           load: true
           tags: helios:ci-test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=docker-ci
+          cache-to: type=gha,scope=docker-ci,mode=max
 
   release-please:
     name: Release Please
@@ -154,5 +154,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=docker-release
+            type=gha,scope=docker-ci
+          cache-to: type=gha,scope=docker-release,mode=max
