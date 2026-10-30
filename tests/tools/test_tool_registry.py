@@ -100,9 +100,15 @@ async def test_fastmcp_async_call_thread_offloading():
 
 def test_all_mcp_tools_declare_four_boolean_annotations():
     tools = mcp._tool_manager.list_tools()
-    assert len(tools) == 10
+    assert len(tools) == 11
 
     expected_annotations = {
+        "distill_memories": {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
         "recall_memories": {
             "readOnlyHint": True,
             "destructiveHint": False,

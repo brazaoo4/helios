@@ -10,6 +10,7 @@ from src.exporter import get_export_dir
 from src.server import (
     app,
     deprecate_memory,
+    distill_memories,
     recall_history,
     recall_memories,
     revalidate_memories,
@@ -241,4 +242,108 @@ def test_memory_tools_edge_cases_and_error_handling(monkeypatch):
     long_content = " ".join(["word"] * 40)
     save_err = save_memory(scope="test", category="fact", content=long_content)
     assert "Error saving memory" in save_err
+
+
+def test_distill_memories_tool(monkeypatch):
+    import unittest.mock as mock
+
+    # 1. Invalid action
+    res_invalid = distill_memories(scope="distill-test", action="invalid")  # type: ignore
+    assert "Invalid action 'invalid'" in res_invalid
+
+    # 2. Clean audit on empty scope
+    res_audit_clean = distill_memories(scope="distill-clean", action="audit")
+    assert "Memory bank is clean" in res_audit_clean
+    assert "Active Memories**: 0" in res_audit_clean
+
+    # 3. Clean suggest on empty scope
+    res_suggest_clean = distill_memories(scope="distill-clean", action="suggest")
+    assert "No slot collisions or near-duplicate facts detected" in res_suggest_clean
+
+    # 4. Populate scope with:
+    # - expired episodic memory
+    # - stale memory (> 30d stale)
+    # - potential slot collision pair
+    # - cold memory (> 30d unaccessed, 0 hits)
+    save_memory(
+        scope="distill-test",
+        category="episodic",
+        content="Temporary sprint note about testing",
+        subject="sprint-note",
+    )
+    save_memory(
+        scope="distill-test",
+        category="fact",
+        content="Stale configuration for postgres host db.internal",
+        subject="db-host",
+    )
+    # Collision pair:
+    save_memory(
+        scope="distill-test",
+        category="fact",
+        content="Postgres primary database server running on port 5432",
+        subject="pg-port",
+    )
+    save_memory(
+        scope="distill-test",
+        category="fact",
+        content="Postgres database listen port is 5432 for primary server",
+        subject="pg-listen-port",
+    )
+
+    # Fast-forward timestamps in SQLite to simulate expiry, staleness, and age
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE memories SET valid_from = datetime('now', '-15 days'), last_accessed = datetime('now', '-15 days') WHERE subject = 'sprint-note'"
+        )
+        conn.execute(
+            "UPDATE memories SET status = 'stale', stale_reason = 'drift test', valid_from = datetime('now', '-35 days'), last_accessed = datetime('now', '-35 days') WHERE subject = 'db-host'"
+        )
+        conn.execute(
+            "UPDATE memories SET valid_from = datetime('now', '-45 days'), last_accessed = datetime('now', '-35 days'), hit_count = 0 WHERE subject = 'pg-port'"
+        )
+
+    # 5. Audit populated scope
+    res_audit = distill_memories(scope="distill-test", action="audit", stale_age_days=30)
+    assert "Expired Episodic Notes (1)" in res_audit
+    assert "Stale Backlog > 30d (1)" in res_audit
+    assert "Cold Memories" in res_audit
+    assert "Potential Slot Collisions" in res_audit
+    assert "pg-port" in res_audit
+    assert "pg-listen-port" in res_audit
+
+    # 6. Suggest consolidations
+    res_suggest = distill_memories(scope="distill-test", action="suggest")
+    assert "Helios Consolidation Recommendations" in res_suggest
+    assert "Recommendation 1: Consolidate" in res_suggest
+    assert "save_memory" in res_suggest
+    assert "deprecate_memory" in res_suggest
+
+    # 7. Prune dry_run=True (Safety gate)
+    res_dry_run = distill_memories(scope="distill-test", action="prune", dry_run=True, stale_age_days=30)
+    assert "DRY RUN (no changes applied)" in res_dry_run
+    assert "Expired episodic memories to archive: 1" in res_dry_run
+    assert "Stale memories older than 30 days to archive: 1" in res_dry_run
+
+    # Verify nothing was actually pruned yet
+    with get_connection() as conn:
+        active_count = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE scope = 'distill-test' AND status IN ('active', 'stale')"
+        ).fetchone()[0]
+        assert active_count == 4
+
+    # 8. Prune dry_run=False (Apply pruning)
+    res_prune = distill_memories(scope="distill-test", action="prune", dry_run=False, stale_age_days=30)
+    assert "Archived 2 obsolete memories in scope 'distill-test'" in res_prune
+    assert "Markdown exports synchronized" in res_prune
+
+    # Prune again when nothing is left to prune
+    res_prune_again = distill_memories(scope="distill-test", action="prune", dry_run=False, stale_age_days=30)
+    assert "No memories met pruning criteria in scope 'distill-test'" in res_prune_again
+
+    # 9. Error handling
+    with mock.patch("src.tools.memory.db_audit_memories", side_effect=RuntimeError("Audit boom")):
+        err_res = distill_memories(scope="distill-test", action="audit")
+        assert "Error distilling memories: Audit boom" in err_res
+
 

@@ -59,6 +59,7 @@ def test_server_public_reexports_contract():
         "app",
         "deprecate_memory",
         "disable_repo_webhooks",
+        "distill_memories",
         "enable_repo_webhooks",
         "export_bundle",
         "export_bundle_download",

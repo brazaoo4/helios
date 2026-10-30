@@ -7,13 +7,15 @@ from pydantic import Field
 
 from src import __version__
 from src.db import (
-    deprecate_memory as db_deprecate_memory,
-)
-from src.db import (
+    db_audit_memories,
+    db_prune_memories,
     get_connection,
     query_memories,
     resolve_scope,
     upsert_memory,
+)
+from src.db import (
+    deprecate_memory as db_deprecate_memory,
 )
 from src.db import (
     revalidate_memories as db_revalidate_memories,
@@ -348,9 +350,135 @@ def revalidate_memories(
         return f"Error revalidating memories: {exc}"
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def distill_memories(
+    scope: Annotated[
+        str,
+        Field(
+            default="global",
+            description="Target scope to audit or distill. Use 'all' or specific scope name like 'homelab' or 'helios'.",
+        ),
+    ] = "global",
+    action: Annotated[
+        Literal["audit", "prune", "suggest"],
+        Field(
+            default="audit",
+            description="Action to perform: 'audit' (read-only health scan), 'prune' (archive expired/stale memories), or 'suggest' (recommend deduplication consolidations).",
+        ),
+    ] = "audit",
+    dry_run: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Safety gate for action='prune'. Set to False to apply archival to SQLite.",
+        ),
+    ] = True,
+    stale_age_days: Annotated[
+        int,
+        Field(
+            default=30,
+            description="Minimum age in days for stale memories to be considered for pruning.",
+        ),
+    ] = 30,
+) -> str:
+    """
+    Audit memory hygiene, identify overlapping slot collisions, and prune expired or long-stale memories.
+    """
+    try:
+        act = (action or "audit").strip().lower()
+        if act == "audit":
+            data = db_audit_memories(raw_scope=scope, stale_age_days=stale_age_days)
+            lines = [
+                f"### 🛡️ Helios Memory Audit (`{data['scope']}`)",
+                f"- **Active Memories**: {data['total_active']} ({data['total_words']} total words, ~{data['avg_words']} words/fact)",
+                f"- **Stale Memories**: {data['total_stale']}",
+                f"- **Archived (Historical)**: {data['total_archived']}",
+            ]
+            if data["expired_episodic"]:
+                lines.append(f"\n#### ⏳ Expired Episodic Notes ({len(data['expired_episodic'])}):")
+                for e in data["expired_episodic"]:
+                    lines.append(f"- `#{e['id']}` [{e['scope']}/{e['subject']}]: {e['content']}")
+            if data["stale_backlog"]:
+                lines.append(f"\n#### ⚠️ Stale Backlog > {stale_age_days}d ({len(data['stale_backlog'])}):")
+                for s in data["stale_backlog"]:
+                    lines.append(f"- `#{s['id']}` [{s['scope']}/{s['subject']}]: {s['content']} (stale: {s['stale_reason']})")
+            if data["cold_memories"]:
+                lines.append(f"\n#### ❄️ Cold Memories (0 hits, > 30d unaccessed) ({len(data['cold_memories'])}):")
+                for c in data["cold_memories"]:
+                    lines.append(f"- `#{c['id']}` [{c['scope']}/{c['subject']}]: {c['content']}")
+            if data["potential_collisions"]:
+                lines.append(f"\n#### 🔍 Potential Slot Collisions ({len(data['potential_collisions'])}):")
+                for col in data["potential_collisions"]:
+                    lines.append(
+                        f"- `#{col['mem1']['id']}` [{col['mem1']['subject']}] ↔ `#{col['mem2']['id']}` [{col['mem2']['subject']}] "
+                        f"({int(col['similarity'] * 100)}% match, shared: {', '.join(col['shared_terms'])})"
+                    )
+            if not data["expired_episodic"] and not data["stale_backlog"] and not data["potential_collisions"]:
+                lines.append("\n✅ **Memory bank is clean.** No expired episodic notes, unreviewed stale drift, or slot collisions.")
+            return "\n".join(lines)
+
+        elif act == "prune":
+            if dry_run:
+                audit = db_audit_memories(raw_scope=scope, stale_age_days=stale_age_days)
+                cnt_ep = len(audit["expired_episodic"])
+                cnt_st = len(audit["stale_backlog"])
+                return (
+                    f"DRY RUN (no changes applied):\n"
+                    f"- Expired episodic memories to archive: {cnt_ep}\n"
+                    f"- Stale memories older than {stale_age_days} days to archive: {cnt_st}\n\n"
+                    f"To execute permanent archival, run: `distill_memories(scope='{scope}', action='prune', dry_run=False)`."
+                )
+            res = db_prune_memories(raw_scope=scope, prune_stale=True, stale_age_days=stale_age_days)
+            sync_markdown_exports()
+            total_pruned = res["pruned_episodic"] + res["pruned_stale"]
+            if total_pruned > 0:
+                return (
+                    f"Archived {total_pruned} obsolete memories in scope '{res['scope']}' "
+                    f"({res['pruned_episodic']} expired episodic, {res['pruned_stale']} stale older than {stale_age_days}d). "
+                    f"Archived IDs: {', '.join(f'#{i}' for i in res['archived_ids'])}. Markdown exports synchronized."
+                )
+            return f"No memories met pruning criteria in scope '{res['scope']}'."
+
+        elif act == "suggest":
+            audit = db_audit_memories(raw_scope=scope, stale_age_days=stale_age_days)
+            collisions = audit["potential_collisions"]
+            if not collisions:
+                return f"No slot collisions or near-duplicate facts detected in scope '{scope}'. Memory bank is consolidated."
+            lines = [f"### 💡 Helios Consolidation Recommendations (`{scope}`)\n"]
+            for idx, col in enumerate(collisions, 1):
+                m1 = col["mem1"]
+                m2 = col["mem2"]
+                lines.extend([
+                    f"#### Recommendation {idx}: Consolidate `#{m1['id']}` and `#{m2['id']}`",
+                    f"- `#{m1['id']}` [{m1['subject']}]: {m1['content']}",
+                    f"- `#{m2['id']}` [{m2['subject']}]: {m2['content']}",
+                    f"- **Shared Terms**: `{', '.join(col['shared_terms'])}` (Similarity: {int(col['similarity'] * 100)}%)",
+                    "Suggested consolidation action:",
+                    "```python",
+                    f"# Save consolidated fact superseding #{m1['id']}, then deprecate #{m2['id']}",
+                    f"save_memory(scope='{col['scope']}', subject='{m1['subject']}', content='<CONSOLIDATED_FACT_<=25_WORDS>', replaces_id={m1['id']})",
+                    f"deprecate_memory(memory_id={m2['id']}, reason='Consolidated into #{m1['id']}')",
+                    "```\n",
+                ])
+            return "\n".join(lines)
+
+        else:
+            return f"Invalid action '{action}'. Must be 'audit', 'prune', or 'suggest'."
+    except Exception as exc:
+        return f"Error distilling memories: {exc}"
+
+
 __all__ = [
     "COLD_START_ONBOARDING_NOTICE",
     "deprecate_memory",
+    "distill_memories",
     "recall_history",
     "recall_memories",
     "revalidate_memories",

@@ -408,7 +408,7 @@ flowchart LR
 
 ## 🛠️ 5. MCP Tools Reference
 
-Helios exposes 10 FastMCP tools with strict Pydantic field descriptions, worker-thread offloading via `anyio.to_thread.run_sync`, and explicit `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) meeting MCP Directory and OpenAI directory static safety standards:
+Helios exposes 11 FastMCP tools with strict Pydantic field descriptions, worker-thread offloading via `anyio.to_thread.run_sync`, and explicit `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) meeting MCP Directory and OpenAI directory static safety standards:
 
 | Tool | Key Parameters | Purpose |
 | :--- | :--- | :--- |
@@ -417,6 +417,7 @@ Helios exposes 10 FastMCP tools with strict Pydantic field descriptions, worker-
 | `revalidate_memories` | `memory_ids` | Batch-restore `[STALE]` memories back to active after verifying file changes. |
 | `deprecate_memory` | `memory_id`, `reason` | Retire/archive an obsolete memory and log the reason in the scope's changelog. |
 | `recall_history` | `scope`, `limit` | Inspect superseded and archived records for time-travel debugging. |
+| `distill_memories` | `scope`, `action`, `dry_run`, `stale_age_days` | Audit memory hygiene, detect slot collisions/near-duplicates, and prune expired episodic or abandoned stale notes. |
 | `manage_scope_alias` | `alias`, `canonical_scope`, `action` | Manage aliases (`set`, `remove`, `list` with active/stale counts) or migrate scopes (`rename`). |
 | `manage_server_config` | `action`, `key`, `value` | View or modify runtime settings live (`list`, `set`, `reset`) with automatic secret redaction. |
 | `manage_git_webhooks` | `action`, `repos`, `include_forks` | Interactively list owned repos and enable/disable drift webhooks on GitHub, Forgejo, Gitea, or GitLab. |
@@ -498,6 +499,14 @@ get_client_setup_bundle(
 
 # 10. Generate crash-safe portable backup archive
 export_bundle() -> str
+
+# 11. Audit memory health and prune obsolete facts
+distill_memories(
+    scope: str = "global",
+    action: Literal["audit", "prune", "suggest"] = "audit",
+    dry_run: bool = True,
+    stale_age_days: int = 30,
+) -> str
 ```
 
 </details>
