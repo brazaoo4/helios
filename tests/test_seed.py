@@ -298,3 +298,46 @@ def test_clear_memories_foreign_key_safety():
     # Scoped deletion of ticketera should safely null out foreign key references and delete without IntegrityError
     deleted = clear_memories(scope_filter="ticketera")
     assert deleted == 2
+
+
+def test_seed_verbose_and_validation_failure():
+    # 1. Seeding with validation error raises ValueError
+    bad_facts = [{"scope": "global", "category": "invalid"}]
+    with pytest.raises(ValueError, match="Seed validation failed"):
+        seed(facts=bad_facts)
+
+    # 2. Seeding with verbose=True
+    summary = seed(dry_run=True, verbose=True, scope_filter="global")
+    assert summary["total_evaluated"] > 0
+
+
+def test_seed_cli_modes(monkeypatch):
+    import sys
+
+    # 1. --check mode
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--check"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+
+    # 2. Seeding with --json output
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--json", "--dry-run"])
+    main()
+
+    # 3. --if-empty mode when populated
+    seed(dry_run=False)
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--if-empty"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+
+    # 4. --if-empty with --json
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--if-empty", "--json"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+
+    # 5. --reset mode
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--reset", "--dry-run"])
+    main()
+

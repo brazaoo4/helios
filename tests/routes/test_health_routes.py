@@ -42,3 +42,35 @@ def test_health_endpoint_redaction_when_api_key_set(monkeypatch):
         res_token = client.get("/health?token=super-secret-api-key")
         assert res_token.status_code == 200
         assert "database" in res_token.json()
+
+
+def test_health_endpoint_database_error(monkeypatch):
+    import src.routes.health as health_mod
+
+    def _broken_query():
+        raise RuntimeError("Database connection timed out")
+
+    monkeypatch.setattr(health_mod, "_query_health_status", _broken_query)
+
+    # 1. Open mode (unauthenticated, open mesh) -> 503 with error
+    with TestClient(app) as client:
+        res_open = client.get("/health")
+        assert res_open.status_code == 503
+        data_open = res_open.json()
+        assert data_open["status"] == "unhealthy"
+        assert "Database connection timed out" in data_open["error"]
+
+    # 2. Authenticated mode with error telemetry
+    monkeypatch.setenv("HELIOS_API_KEY", "secret-test-token")
+    with TestClient(app) as client:
+        # Unauthenticated request when key set -> 503 redacted
+        res_unauth = client.get("/health")
+        assert res_unauth.status_code == 503
+        assert res_unauth.json() == {"status": "unhealthy", "service": "helios"}
+
+        # Authenticated request -> 503 full error details
+        res_auth = client.get("/health?token=secret-test-token")
+        assert res_auth.status_code == 503
+        data_auth = res_auth.json()
+        assert data_auth["status"] == "unhealthy"
+        assert "Database connection timed out" in data_auth["error"]

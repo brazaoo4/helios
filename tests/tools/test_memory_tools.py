@@ -210,3 +210,35 @@ def test_recall_memories_stale_filter_does_not_bump_hit_count():
     with get_connection() as conn:
         row = conn.execute("SELECT hit_count FROM memories WHERE scope = 'audit-test'").fetchone()
         assert row["hit_count"] == 1
+
+
+def test_memory_tools_edge_cases_and_error_handling(monkeypatch):
+    # 1. recall_history on empty scope
+    hist_empty = recall_history(scope="empty_history_scope")
+    assert "No historical memories on record for scope 'empty_history_scope'." in hist_empty
+
+    # 2. revalidate_memories when none are stale or found
+    reval_none = revalidate_memories(memory_ids=[99998, 99999])
+    assert "No memories revalidated" in reval_none
+    assert "#99998" in reval_none
+
+    # 3. revalidate_memories with mixed valid stale and not-stale
+    save_res = save_memory(scope="mixed-reval", category="fact", content="Fact for reval", anchor_files=["a.py"])
+    mid = int(re.search(r"#(\d+)", save_res).group(1))
+    # Mark stale
+    with TestClient(app) as client:
+        client.post("/webhook/git", json={"repository": {"name": "mixed-reval"}, "commits": [{"modified": ["a.py"]}]})
+
+    reval_mixed = revalidate_memories(memory_ids=[mid, 88888])
+    assert f"Revalidated 1 memories: #{mid}" in reval_mixed
+    assert "Skipped 1 (not found or not stale): #88888" in reval_mixed
+
+    # 4. deprecate_memory error handling for invalid/missing id
+    dep_err = deprecate_memory(memory_id=-1)
+    assert "Error deprecating memory" in dep_err
+
+    # 5. save_memory word count error handling
+    long_content = " ".join(["word"] * 40)
+    save_err = save_memory(scope="test", category="fact", content=long_content)
+    assert "Error saving memory" in save_err
+

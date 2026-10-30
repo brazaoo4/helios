@@ -166,3 +166,22 @@ def test_git_webhook_payload_size_limit():
         res = client.post("/webhook/git", content=huge_body, headers={"content-type": "application/json"})
         assert res.status_code == 413
         assert "Payload exceeds 1MB limit" in res.text
+
+
+def test_webhook_signature_helpers():
+    from src.routes.git_webhooks import verify_forgejo_signature, verify_github_signature
+
+    body = b"hello world"
+    secret = "secret"
+    expected = hmac.new(secret.encode(), msg=body, digestmod=hashlib.sha256).hexdigest()
+
+    # Forgejo
+    assert not verify_forgejo_signature(body, "", secret)
+    assert verify_forgejo_signature(body, f"sha256={expected}", secret)
+    assert verify_forgejo_signature(body, expected, secret)
+
+    # GitHub
+    assert not verify_github_signature(body, "", secret)
+    assert not verify_github_signature(body, "badprefix", secret)
+    assert verify_github_signature(body, f"sha256={expected}", secret)
+

@@ -160,3 +160,12 @@ def test_manage_server_config_set_and_reset():
     # 10. Unknown setting
     unk_res = manage_server_config(action="set", key="NONEXISTENT_SETTING", value="val")
     assert "Error: Unknown setting" in unk_res
+
+    # 11. Empty keys and invalid actions
+    assert "Invalid action 'bad_action'" in manage_scope_alias(action="bad_action")
+    assert "'key' is required when action='set'" in manage_server_config(action="set", key="")
+    assert "'key' is required when action='reset'" in manage_server_config(action="reset", key="")
+    assert "Unknown setting 'NONEXISTENT'" in manage_server_config(action="reset", key="NONEXISTENT")
+    assert "had no SQLite override" in manage_server_config(action="reset", key="HELIOS_WORD_LIMIT")
+    assert "Invalid action 'bad_action'" in manage_server_config(action="bad_action")
+

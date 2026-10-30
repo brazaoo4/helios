@@ -31,6 +31,15 @@ memories:
         assert "Enforce mypy strict mode" in recalled
 
 
+def test_lifespan_auto_seed_environment(monkeypatch):
+    """Verify lifespan triggers auto-seeding when HELIOS_AUTO_SEED is enabled."""
+    monkeypatch.setenv("HELIOS_AUTO_SEED", "true")
+    with TestClient(app):
+        # Database should be seeded on startup
+        recalled = recall_memories(scope="helios", query="AUDN")
+        assert "AUDN" in recalled
+
+
 def test_server_public_reexports_contract():
     """Verify that src.server preserves full backward compatibility via __all__."""
     expected_symbols = [

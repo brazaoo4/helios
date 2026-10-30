@@ -40,16 +40,27 @@ jobs:
       - name: Run Ruff linter
         run: ruff check src/ tests/
 
-      - name: Run unit test suite
+      - name: Run unit test suite with coverage
         env:
           MEMORY_DATA_DIR: /tmp/helios_ci_test_data
-        run: pytest tests/ -v
+        run: pytest tests/ --cov=src --cov-report=term-missing:skip-covered --cov-fail-under=90
 
       - name: Validate declarative seed facts
         run: python -m src.seed --check
 
-      - name: Verify Docker image build
-        run: docker build -t helios:ci-test .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify Docker image build (with GHA cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: helios:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   release-please:
     name: Release Please

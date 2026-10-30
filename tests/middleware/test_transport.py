@@ -65,3 +65,24 @@ def test_hybrid_mcp_stale_session_fallback():
     }
     anyio.run(hybrid_handler, scope, fake_receive, fake_send)
     assert any(m.get("type") == "http.response.start" and m.get("status") == 200 for m in messages_sent)
+
+
+def test_hybrid_mcp_sse_token_injection():
+    messages_sent = []
+
+    async def fake_send(message):
+        messages_sent.append(message)
+
+    async def fake_receive():
+        return {"type": "http.disconnect"}
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/sse",
+        "query_string": b"token=test-query-token-123",
+        "headers": [],
+    }
+    anyio.run(hybrid_handler, scope, fake_receive, fake_send)
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 200 for m in messages_sent)
+
