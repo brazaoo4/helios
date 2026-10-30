@@ -28,7 +28,13 @@ src/
 ├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
 ├── db.py                  # SQLite WAL operations, FTS5 BM25 queries, schema migrations
 ├── exporter.py            # Thread-safe Markdown export mirroring & portable tar.gz backup
-├── onboarding.py          # Script generation (Bash/PowerShell) & client configuration bundles
+├── onboarding/            # Automated client onboarding, directive templates, and setup scripts
+│   ├── __init__.py        # Re-exports for onboarding package and backward compatibility
+│   ├── client_config.py   # Client registry, MCP paths, snippets, and base URL resolution
+│   ├── templates.py       # Global agent directives, /remember skill, and cognitive guard hook
+│   ├── bundles.py         # Multi-client setup bundle generation and Markdown guides
+│   ├── scripts_setup.py   # Automated Bash and PowerShell setup script generation
+│   └── scripts_uninstall.py # Automated uninstallation script generation
 ├── webhooks.py            # Git provider integrations (GitHub, Forgejo/Gitea, GitLab)
 ├── seed.py                # Declarative seed validator and ingestion runner
 │
@@ -66,6 +72,7 @@ src/
 | **`src/config.py`** | **Configuration Resolution**: Layered settings manager resolving runtime variables across SQLite `runtime_settings`, host environment variables, and built-in safe defaults. |
 | **`src/db.py`** | **Data Persistence**: SQLite connection factory, WAL pragma enforcement, FTS5 virtual table queries, AUDN slot supersession, and scope migration logic. |
 | **`src/exporter.py`** | **Export Pipeline**: Synchronizes database state into disk Markdown files using `_EXPORT_LOCK` and creates consistent snapshots via the SQLite Online Backup API. |
+| **`src/onboarding/`** | **Client Onboarding & Lifecycle**: Generates multi-platform setup/uninstall scripts (Bash, PowerShell), agent directive templates, `/remember` skill definitions, and MCP config snippets across 8 client ecosystems. |
 
 ---
 
@@ -195,6 +202,7 @@ tests/
 │   └── test_transport.py           # Transport security, reverse proxy, and session fallback tests
 ├── routes/
 │   ├── test_health_routes.py       # Health check open mode & authenticated redaction tests
+│   ├── test_setup_routes.py        # HTTP onboarding endpoints (/setup, /setup.sh, /uninstall, etc.)
 │   ├── test_exports_routes.py      # /export/markdown and /export/bundle tar.gz tests
 │   └── test_git_webhooks_routes.py # Multi-provider Git signature & drift detection tests
 ├── tools/
@@ -202,10 +210,16 @@ tests/
 │   ├── test_memory_tools.py        # AUDN lifecycle, drift, word budget, and hit tracking tests
 │   ├── test_config_tools.py        # Day-2 live server configuration & scope alias tests
 │   └── test_admin_tools.py         # Snapshot archive & operational tool tests
+├── onboarding/
+│   ├── test_client_config.py       # Client registry, paths, snippets, and URL resolution tests
+│   ├── test_templates.py           # Directives, remember skill, and guard hook template tests
+│   ├── test_bundles.py             # Setup bundle tool and markdown generation tests
+│   ├── test_scripts_setup.py       # Bash/PowerShell setup script execution & injection tests
+│   └── test_scripts_uninstall.py   # Clean uninstallation and user settings preservation tests
 ├── test_db.py                      # Core SQLite schema, FTS5 BM25, and migration tests
 ├── test_exporter.py                # Markdown export synchronization and atomicity tests
 ├── test_guard.py                   # Cognitive write-through guard hook tests
-├── test_onboarding.py              # Script generation and client bundle tests
+├── test_onboarding.py              # Package re-exports contract and static scanner invariant tests
 ├── test_seed.py                    # Declarative seed file ingestion & validation tests
 └── test_server.py                  # Composition root lifespan and public re-export contract tests
 ```

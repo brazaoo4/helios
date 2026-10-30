@@ -49,15 +49,16 @@ src/
 ├── config.py              # Layered settings engine (SQLite > Env > Defaults)
 ├── db.py                  # SQLite WAL operations, FTS5 BM25 queries, schema migrations
 ├── exporter.py            # Markdown mirror synchronization & backup archive generation
-├── onboarding.py          # Script generation & multi-client setup runbooks
+├── onboarding/            # Script generation, multi-client setup runbooks, and uninstallation
 ├── webhooks.py            # Git provider integrations (GitHub, Forgejo/Gitea, GitLab)
 └── seed.py                # Declarative seed validator & ingestion runner
 
 tests/
 ├── conftest.py            # Shared environment & database isolation fixtures
 ├── middleware/            # Tests for AuthGate and transport multiplexing
-├── routes/                # Tests for REST routes, health telemetry, and webhooks
-└── tools/                 # Tests for FastMCP tools, schemas, and thread offloading
+├── routes/                # Tests for REST routes, health telemetry, setup, and webhooks
+├── tools/                 # Tests for FastMCP tools, schemas, and thread offloading
+└── onboarding/            # Tests for client config, templates, bundles, and scripts
 ```
 
 ---
