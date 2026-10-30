@@ -8,7 +8,7 @@ to flag affected active memories as stale.
 import json
 import re
 
-from src.db.connection import get_connection
+from src.db.connection import get_connection, now_iso
 from src.db.scopes import resolve_scope
 
 
@@ -70,9 +70,10 @@ def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: s
             if matched_file:
                 clean_matched = re.sub(r"[^a-zA-Z0-9_./-]", "", matched_file)[:120]
                 reason = f"{clean_matched} modified in commit {short_sha}"
+                ts_now = now_iso()
                 conn.execute(
-                    "UPDATE memories SET status = 'stale', stale_reason = ? WHERE id = ?",
-                    (reason, row["id"]),
+                    "UPDATE memories SET status = 'stale', stale_reason = ?, stale_since = ? WHERE id = ?",
+                    (reason, ts_now, row["id"]),
                 )
                 flagged_count += 1
 

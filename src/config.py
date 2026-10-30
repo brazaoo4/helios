@@ -89,7 +89,7 @@ def validate_http_url(url: str, allow_loopback: bool = False) -> str:
     if not cleaned:
         return ""
 
-    for ch in ('"', "'", "`", " ", "\t", "\n", "\r"):
+    for ch in ('"', "'", "`", "$", "(", ")", " ", "\t", "\n", "\r", "\\"):
         if ch in cleaned:
             raise ValueError(f"URL contains invalid characters: {cleaned!r}")
 
@@ -113,16 +113,20 @@ def validate_http_url(url: str, allow_loopback: bool = False) -> str:
 
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_link_local or host.startswith("169.254."):
+        v4 = ip.ipv4_mapped if (isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped) else ip
+        if ip.is_link_local or v4.is_link_local or host.startswith("169.254.") or str(v4) == "100.100.100.200":
             raise ValueError(f"Access to link-local/cloud metadata IP '{host}' is forbidden.")
-        if not allow_loopback and (ip.is_loopback or host == "0.0.0.0"):
+        in_zero_net = isinstance(v4, ipaddress.IPv4Address) and v4 in ipaddress.ip_network("0.0.0.0/8")
+        if not allow_loopback and (ip.is_loopback or v4.is_loopback or ip.is_unspecified or in_zero_net):
             raise ValueError(f"Loopback IP address '{host}' is forbidden.")
     except ValueError as exc:
         if "forbidden" in str(exc):
             raise
         if host.startswith("169.254."):
             raise ValueError(f"Access to link-local/cloud metadata host '{host}' is forbidden.")
-        if not allow_loopback and (host == "localhost" or host.endswith(".localhost")):
+        if any(part.isdigit() or part.lower().startswith("0x") for part in host.split(".") if part):
+            raise ValueError(f"Non-standard numeric IP literal '{host}' is forbidden.")
+        if not allow_loopback and (host == "localhost" or host.endswith(".localhost") or host == "0.0.0.0"):
             raise ValueError(f"Loopback host '{host}' is forbidden.")
 
     clean_path = parsed.path.rstrip("/")
@@ -327,6 +331,8 @@ def __getattr__(name: str):
         return get_webhook_secret()
     if name == "HELIOS_ALLOWED_ORIGINS":
         return get_allowed_origins()
+    if name == "HELIOS_PUBLIC_URL":
+        return get_public_url()
     if name in MUTABLE_SETTINGS:
         val, _ = resolve_setting_with_source(name)
         return val

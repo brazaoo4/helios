@@ -1,5 +1,11 @@
 """Automated Bash and PowerShell 1-liner client uninstaller script generators."""
 
+from src.onboarding.client_config import (
+    escape_bash_single_quote,
+    escape_ps_single_quote,
+    validate_onboarding_params,
+)
+
 
 def generate_uninstall_powershell(base_url: str = "", client: str = "all") -> str:
     """
@@ -7,10 +13,12 @@ def generate_uninstall_powershell(base_url: str = "", client: str = "all") -> st
     Usage: irm https://<host>/uninstall.ps1 | iex
     Removes Helios MCP registrations, marker directive blocks, guard hooks, and skills.
     """
-    client_norm = (client or "all").strip().lower()
+    _, client_norm = validate_onboarding_params(client=client)
+    esc_client = escape_ps_single_quote(client_norm)
 
     return f"""# Helios Automated Client Uninstaller for Windows PowerShell
 $ErrorActionPreference = 'Continue'
+$targetClient = '{esc_client}'
 Write-Host "Uninstalling Helios client configuration (client: {client_norm})..." -ForegroundColor Cyan
 
 function Remove-HeliosDirective {{
@@ -34,7 +42,7 @@ function Remove-HeliosDirective {{
 
 # 1. Antigravity MCP & Directives
 $configDir = Join-Path $env:USERPROFILE ".gemini\\config"
-if ("{client_norm}" -eq "antigravity" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "antigravity" -or $targetClient -eq "all") {{
     $mcpPath = Join-Path $configDir "mcp_config.json"
     if (Test-Path $mcpPath) {{
         try {{
@@ -77,7 +85,7 @@ if ("{client_norm}" -eq "antigravity" -or "{client_norm}" -eq "all") {{
 }}
 
 # 2. Cursor
-if ("{client_norm}" -eq "cursor" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "cursor" -or $targetClient -eq "all") {{
     $cursorDir = Join-Path $env:USERPROFILE ".cursor"
     $cMcp = Join-Path $cursorDir "mcp.json"
     if (Test-Path $cMcp) {{
@@ -95,7 +103,7 @@ if ("{client_norm}" -eq "cursor" -or "{client_norm}" -eq "all") {{
 }}
 
 # 3. Claude Desktop & Claude Code
-if ("{client_norm}" -eq "claude-desktop" -or "{client_norm}" -eq "claude-code" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "claude-desktop" -or $targetClient -eq "claude-code" -or $targetClient -eq "all") {{
     $claudeDir = Join-Path $env:APPDATA "Claude"
     $clMcp = Join-Path $claudeDir "claude_desktop_config.json"
     if (Test-Path $clMcp) {{
@@ -117,7 +125,7 @@ if ("{client_norm}" -eq "claude-desktop" -or "{client_norm}" -eq "claude-code" -
 }}
 
 # 4. OpenAI Codex
-if ("{client_norm}" -eq "codex" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "codex" -or $targetClient -eq "all") {{
     $codexDir = Join-Path $env:USERPROFILE ".codex"
     $cToml = Join-Path $codexDir "config.toml"
     if (Test-Path $cToml) {{
@@ -134,7 +142,7 @@ if ("{client_norm}" -eq "codex" -or "{client_norm}" -eq "all") {{
 }}
 
 # 5. Windsurf
-if ("{client_norm}" -eq "windsurf" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "windsurf" -or $targetClient -eq "all") {{
     $wsDir = Join-Path $env:USERPROFILE ".codeium\\windsurf"
     $wsMcp = Join-Path $wsDir "mcp_config.json"
     if (Test-Path $wsMcp) {{
@@ -152,7 +160,7 @@ if ("{client_norm}" -eq "windsurf" -or "{client_norm}" -eq "all") {{
 }}
 
 # 6. VS Code
-if ("{client_norm}" -eq "vscode" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "vscode" -or $targetClient -eq "all") {{
     $vscDir = Join-Path $env:APPDATA "Code\\User"
     $vscMcp = Join-Path $vscDir "mcp.json"
     if (Test-Path $vscMcp) {{
@@ -170,7 +178,7 @@ if ("{client_norm}" -eq "vscode" -or "{client_norm}" -eq "all") {{
 }}
 
 # 7. OpenCode
-if ("{client_norm}" -eq "opencode" -or "{client_norm}" -eq "all") {{
+if ($targetClient -eq "opencode" -or $targetClient -eq "all") {{
     $ocDir = Join-Path $env:USERPROFILE ".config\\opencode"
     $ocMcp = Join-Path $ocDir "opencode.json"
     if (Test-Path $ocMcp) {{
@@ -200,11 +208,13 @@ def generate_uninstall_bash(base_url: str = "", client: str = "all") -> str:
     Usage: curl -fsSL https://<host>/uninstall.sh | bash
     Removes Helios MCP registrations, marker directive blocks, guard hooks, and skills.
     """
-    client_norm = (client or "all").strip().lower()
+    _, client_norm = validate_onboarding_params(client=client)
+    esc_client = escape_bash_single_quote(client_norm)
 
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 
+CLIENT_NORM='{esc_client}'
 echo "Uninstalling Helios client configuration (client: {client_norm})..."
 
 strip_directive() {{
@@ -230,7 +240,7 @@ PYEOF
 }}
 
 # 1. Antigravity MCP & Directives
-if [ "{client_norm}" = "antigravity" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "antigravity" ] || [ "$CLIENT_NORM" = "all" ]; then
     CONFIG_DIR="$HOME/.gemini/config"
     MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
     if [ -f "$MCP_CONFIG" ]; then
@@ -275,7 +285,7 @@ PYEOF
 fi
 
 # 2. Cursor
-if [ "{client_norm}" = "cursor" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "cursor" ] || [ "$CLIENT_NORM" = "all" ]; then
     CURSOR_MCP="$HOME/.cursor/mcp.json"
     if [ -f "$CURSOR_MCP" ]; then
         python3 - "$CURSOR_MCP" <<'PYEOF'
@@ -297,7 +307,7 @@ PYEOF
 fi
 
 # 3. Claude Desktop & Claude Code
-if [ "{client_norm}" = "claude-desktop" ] || [ "{client_norm}" = "claude-code" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "claude-desktop" ] || [ "$CLIENT_NORM" = "claude-code" ] || [ "$CLIENT_NORM" = "all" ]; then
     for CLAUDE_BASE in "$HOME/.config/Claude" "$HOME/Library/Application Support/Claude"; do
         CLAUDE_MCP="$CLAUDE_BASE/claude_desktop_config.json"
         if [ -f "$CLAUDE_MCP" ]; then
@@ -325,7 +335,7 @@ PYEOF
 fi
 
 # 4. OpenAI Codex
-if [ "{client_norm}" = "codex" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "codex" ] || [ "$CLIENT_NORM" = "all" ]; then
     CODEX_TOML="$HOME/.codex/config.toml"
     if [ -f "$CODEX_TOML" ]; then
         python3 - "$CODEX_TOML" <<'PYEOF'
@@ -350,7 +360,7 @@ PYEOF
 fi
 
 # 5. Windsurf
-if [ "{client_norm}" = "windsurf" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "windsurf" ] || [ "$CLIENT_NORM" = "all" ]; then
     WINDSURF_MCP="$HOME/.codeium/windsurf/mcp_config.json"
     if [ -f "$WINDSURF_MCP" ]; then
         python3 - "$WINDSURF_MCP" <<'PYEOF'
@@ -372,7 +382,7 @@ PYEOF
 fi
 
 # 6. VS Code
-if [ "{client_norm}" = "vscode" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "vscode" ] || [ "$CLIENT_NORM" = "all" ]; then
     for VSCODE_BASE in "$HOME/.config/Code/User" "$HOME/Library/Application Support/Code/User"; do
         VSCODE_MCP="$VSCODE_BASE/mcp.json"
         if [ -f "$VSCODE_MCP" ]; then
@@ -396,7 +406,7 @@ PYEOF
 fi
 
 # 7. OpenCode
-if [ "{client_norm}" = "opencode" ] || [ "{client_norm}" = "all" ]; then
+if [ "$CLIENT_NORM" = "opencode" ] || [ "$CLIENT_NORM" = "all" ]; then
     OPENCODE_MCP="$HOME/.config/opencode/opencode.json"
     if [ -f "$OPENCODE_MCP" ]; then
         python3 - "$OPENCODE_MCP" <<'PYEOF'

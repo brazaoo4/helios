@@ -6,6 +6,7 @@ duplicate detection, explicit deprecation, revalidation, and episodic TTL prunin
 """
 
 import json
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -72,8 +73,14 @@ def upsert_memory(
     if category not in valid_categories:
         raise ValueError(f"Invalid category '{category}'. Must be one of: {valid_categories}")
 
+    # Normalize Unicode and replace invisible format/blank separators with spaces
+    norm_content = unicodedata.normalize("NFKC", content)
+    norm_content = "".join(
+        " " if (unicodedata.category(ch) in ("Cf", "Cc") or ch in ("\u2800", "\u3164")) else ch
+        for ch in norm_content
+    )
     # Normalize whitespace (strip leading/trailing, collapse multiple spaces into one)
-    content_clean = " ".join(content.strip().split())
+    content_clean = " ".join(norm_content.strip().split())
     if not content_clean:
         raise ValueError("Memory content cannot be empty.")
 
@@ -84,10 +91,22 @@ def upsert_memory(
             f"Content exceeds {word_limit}-word limit ({word_count} words; remove at least {word_count - word_limit} words). Keep facts atomic."
         )
 
-    subject_clean = subject.strip().lower()
+    max_chars = max(word_limit * 16, 400)
+    if len(content_clean) > max_chars:
+        raise ValueError(f"Content exceeds {max_chars}-character limit ({len(content_clean)} chars).")
+
+    subject_clean = " ".join(unicodedata.normalize("NFKC", subject).strip().lower().split())
+    if len(subject_clean) > 80 or any(ch in subject_clean for ch in ("[", "]", "`", "\n", "\r")):
+        raise ValueError("Subject must be <= 80 characters and must not contain brackets, backticks, or newlines.")
+
+    raw_anchors = anchor_files or []
+    if len(raw_anchors) > 25:
+        raise ValueError("anchor_files cannot exceed 25 file paths per memory.")
     normalized_anchors = list(
-        dict.fromkeys(_normalize_repo_path(a) for a in (anchor_files or []) if _normalize_repo_path(a))
+        dict.fromkeys(_normalize_repo_path(a) for a in raw_anchors if _normalize_repo_path(a))
     )
+    if any(len(a) > 240 or any(c in a for c in ("`", "\n", "\r")) for a in normalized_anchors):
+        raise ValueError("Each anchor_file path must be <= 240 characters without backticks or newlines.")
     anchors_json = json.dumps(normalized_anchors)
     ts = now_iso()
 
@@ -124,7 +143,7 @@ def upsert_memory(
                 )
                 superseded_ids.append(replaces_id)
 
-            update_fields = ["status = 'active'", "stale_reason = ''", "last_accessed = ?"]
+            update_fields = ["status = 'active'", "stale_reason = ''", "stale_since = NULL", "last_accessed = ?"]
             params: list[Any] = [ts]
             if anchor_files is not None:
                 update_fields.append("anchor_files = ?")
@@ -259,7 +278,7 @@ def revalidate_memories(memory_ids: list[int]) -> dict[str, Any]:
             conn.execute(
                 f"""
                 UPDATE memories
-                SET status = 'active', stale_reason = '', last_accessed = ?
+                SET status = 'active', stale_reason = '', stale_since = NULL, last_accessed = ?
                 WHERE id IN ({update_placeholders})
                 """,
                 (ts, *stale_ids),

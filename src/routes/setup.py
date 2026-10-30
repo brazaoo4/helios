@@ -1,5 +1,6 @@
 """HTTP endpoints for automated client setup and uninstallation runbooks."""
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
@@ -24,8 +25,11 @@ async def setup_instructions(request: Request) -> Response:
     base_url = resolve_server_base_url(headers_dict)
     has_auth = get_api_key() is not None
     query_token = request.query_params.get("token")
-    content = generate_setup_markdown(
-        base_url=base_url, has_auth=has_auth, query_token=query_token
+    content = await anyio.to_thread.run_sync(
+        generate_setup_markdown,
+        base_url,
+        has_auth,
+        query_token,
     )
     return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
 
@@ -41,13 +45,17 @@ async def setup_powershell_script(request: Request) -> Response:
     query_token = request.query_params.get("token")
     role = request.query_params.get("role", "workstation")
     client = request.query_params.get("client", "all")
-    script = generate_setup_powershell(
-        base_url=base_url,
-        query_token=query_token,
-        instance_role=role,
-        client=client,
-    )
-    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    try:
+        script = await anyio.to_thread.run_sync(
+            generate_setup_powershell,
+            base_url,
+            query_token,
+            role,
+            client,
+        )
+        return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    except ValueError as exc:
+        return PlainTextResponse(f"Error: {exc}\n", status_code=400)
 
 
 async def setup_bash_script(request: Request) -> Response:
@@ -61,13 +69,17 @@ async def setup_bash_script(request: Request) -> Response:
     query_token = request.query_params.get("token")
     role = request.query_params.get("role", "workstation")
     client = request.query_params.get("client", "all")
-    script = generate_setup_bash(
-        base_url=base_url,
-        query_token=query_token,
-        instance_role=role,
-        client=client,
-    )
-    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    try:
+        script = await anyio.to_thread.run_sync(
+            generate_setup_bash,
+            base_url,
+            query_token,
+            role,
+            client,
+        )
+        return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    except ValueError as exc:
+        return PlainTextResponse(f"Error: {exc}\n", status_code=400)
 
 
 async def uninstall_instructions(request: Request) -> Response:
@@ -78,10 +90,18 @@ async def uninstall_instructions(request: Request) -> Response:
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     client = request.query_params.get("client", "all")
-    content = generate_client_bundle(
-        client=client, base_url=base_url, action="uninstall"
-    )
-    return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+    try:
+        content = await anyio.to_thread.run_sync(
+            generate_client_bundle,
+            client,
+            "auto",
+            "workstation",
+            base_url,
+            "uninstall",
+        )
+        return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+    except ValueError as exc:
+        return PlainTextResponse(f"Error: {exc}\n", status_code=400)
 
 
 async def uninstall_powershell_script(request: Request) -> Response:
@@ -93,8 +113,15 @@ async def uninstall_powershell_script(request: Request) -> Response:
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     client = request.query_params.get("client", "all")
-    script = generate_uninstall_powershell(base_url=base_url, client=client)
-    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    try:
+        script = await anyio.to_thread.run_sync(
+            generate_uninstall_powershell,
+            base_url,
+            client,
+        )
+        return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    except ValueError as exc:
+        return PlainTextResponse(f"Error: {exc}\n", status_code=400)
 
 
 async def uninstall_bash_script(request: Request) -> Response:
@@ -106,8 +133,15 @@ async def uninstall_bash_script(request: Request) -> Response:
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     client = request.query_params.get("client", "all")
-    script = generate_uninstall_bash(base_url=base_url, client=client)
-    return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    try:
+        script = await anyio.to_thread.run_sync(
+            generate_uninstall_bash,
+            base_url,
+            client,
+        )
+        return PlainTextResponse(script, media_type="text/plain; charset=utf-8")
+    except ValueError as exc:
+        return PlainTextResponse(f"Error: {exc}\n", status_code=400)
 
 
 __all__ = [

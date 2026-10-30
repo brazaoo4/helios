@@ -18,12 +18,13 @@ def _query_health_status() -> tuple[str, int]:
 
 
 async def health_check(request: Request) -> JSONResponse:
+    is_auth = is_request_authenticated(request)
     try:
         journal_mode, active_count = await anyio.to_thread.run_sync(
             _query_health_status
         )
 
-        if not is_request_authenticated(request):
+        if not is_auth:
             return JSONResponse(
                 {
                     "status": "healthy",
@@ -45,7 +46,7 @@ async def health_check(request: Request) -> JSONResponse:
             status_code=200,
         )
     except Exception as exc:
-        if not is_request_authenticated(request):
+        if not is_auth:
             return JSONResponse(
                 {
                     "status": "unhealthy",

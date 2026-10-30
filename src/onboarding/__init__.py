@@ -6,11 +6,16 @@ from src.onboarding.bundles import (
 )
 from src.onboarding.client_config import (
     SUPPORTED_CLIENTS,
+    VALID_CLIENTS,
+    VALID_ROLES,
+    escape_bash_single_quote,
+    escape_ps_single_quote,
     get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
     normalize_os_platform,
     resolve_server_base_url,
+    validate_onboarding_params,
 )
 from src.onboarding.scripts_setup import (
     generate_setup_bash,
@@ -28,6 +33,10 @@ from src.onboarding.templates import (
 
 __all__ = [
     "SUPPORTED_CLIENTS",
+    "VALID_CLIENTS",
+    "VALID_ROLES",
+    "escape_bash_single_quote",
+    "escape_ps_single_quote",
     "generate_client_bundle",
     "generate_global_directive",
     "generate_guard_hook_script",
@@ -42,4 +51,5 @@ __all__ = [
     "get_mcp_config_snippet",
     "normalize_os_platform",
     "resolve_server_base_url",
+    "validate_onboarding_params",
 ]

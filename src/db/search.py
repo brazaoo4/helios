@@ -49,15 +49,19 @@ def build_fts5_query(clean_tokens: list[str]) -> str:
     e.g. '("db"* OR "database"* OR "sql"*)'.
     """
     clusters: list[str] = []
-    for tok in clean_tokens:
-        tok_lower = tok.lower()
+    for raw_tok in clean_tokens[:32]:
+        safe_tok = raw_tok.replace("\x00", "").replace('"', '""').strip()
+        if not safe_tok:
+            continue
+        tok_lower = safe_tok.lower()
         synonyms = _SYNONYM_LOOKUP.get(tok_lower, ())
         top_syns = [s for s in synonyms if s != tok_lower][:3]
         if top_syns:
-            syn_clauses = " OR ".join(f'"{s}"*' for s in top_syns)
-            clusters.append(f'("{tok}"* OR {syn_clauses})')
+            safe_syns = [s.replace('"', '""') for s in top_syns]
+            syn_clauses = " OR ".join(f'"{s}"*' for s in safe_syns)
+            clusters.append(f'("{safe_tok}"* OR {syn_clauses})')
         else:
-            clusters.append(f'"{tok}"*')
+            clusters.append(f'"{safe_tok}"*')
     return " OR ".join(clusters)
 
 
@@ -188,7 +192,7 @@ def query_memories(
             ids = [r["id"] for r in results]
             id_str = ",".join("?" for _ in ids)
             conn.execute(
-                f"UPDATE memories SET hit_count = hit_count + 1, last_accessed = ? WHERE id IN ({id_str})",
+                f"UPDATE memories SET hit_count = hit_count + 1, last_accessed = ? WHERE id IN ({id_str}) AND valid_to IS NULL",
                 (ts, *ids),
             )
 

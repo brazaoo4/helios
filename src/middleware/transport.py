@@ -49,17 +49,21 @@ class HybridMCPHandler:
                 token_val = qparams.get("token", [None])[0]
                 if token_val:
                     enc_token = urllib.parse.quote(token_val, safe="").encode("utf-8")
+                    endpoint_rewritten = False
 
                     async def send_with_token(message: dict[str, Any]) -> None:
-                        if message.get("type") == "http.response.body":
+                        nonlocal endpoint_rewritten
+                        if not endpoint_rewritten and message.get("type") == "http.response.body":
                             body = message.get("body", b"")
-                            if b"/messages/?session_id=" in body:
+                            if b"event: endpoint" in body and b"/messages/?session_id=" in body:
                                 new_body = re.sub(
                                     rb"(/messages/\?session_id=[a-fA-F0-9]+)",
                                     rb"\1&token=" + enc_token,
                                     body,
+                                    count=1,
                                 )
                                 message = {**message, "body": new_body}
+                                endpoint_rewritten = True
                         await send(message)
 
                     await sse_app(scope, receive, send_with_token)

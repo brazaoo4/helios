@@ -7,7 +7,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from src.config import get_changelog_limit, get_memory_data_dir
+from src.config import MUTABLE_SETTINGS, get_changelog_limit, get_memory_data_dir
 from src.db import get_connection, now_iso
 
 _EXPORT_LOCK = threading.RLock()
@@ -93,6 +93,7 @@ def sync_markdown_exports() -> list[str]:
         changelog_limit = get_changelog_limit()
 
         with get_connection() as conn:
+            conn.execute("BEGIN DEFERRED")
             scopes = [
                 r["scope"]
                 for r in conn.execute("SELECT DISTINCT scope FROM memories ORDER BY scope").fetchall()
@@ -137,7 +138,7 @@ def sync_markdown_exports() -> list[str]:
                         atomic_write(scope_file, content_str)
                     written_paths.append(str(scope_file))
                     expected_active_files.add(scope_file)
-                elif scope_file.exists():
+                elif scope_file.exists() and scope_file not in expected_active_files:
                     scope_file.unlink()
 
                 # --- 2. Historical Changelog Audit Log ---
@@ -176,7 +177,7 @@ def sync_markdown_exports() -> list[str]:
                         atomic_write(hist_file, hist_content_str)
                     written_paths.append(str(hist_file))
                     expected_hist_files.add(hist_file)
-                elif hist_file.exists():
+                elif hist_file.exists() and hist_file not in expected_hist_files:
                     hist_file.unlink()
 
         # Clean up orphaned Markdown files from deleted or migrated scopes
@@ -216,8 +217,17 @@ def create_portable_archive() -> str:
                 dest_conn = sqlite3.connect(temp_snapshot)
                 try:
                     src_conn.backup(dest_conn)
+                    sensitive_keys = [k for k, m in MUTABLE_SETTINGS.items() if m.get("sensitive")]
+                    if sensitive_keys:
+                        placeholders = ",".join("?" for _ in sensitive_keys)
+                        dest_conn.execute(
+                            f"DELETE FROM runtime_settings WHERE key IN ({placeholders})",
+                            sensitive_keys,
+                        )
+                        dest_conn.commit()
                     # Convert to DELETE journal mode so WAL files are not expected when opened elsewhere
                     dest_conn.execute("PRAGMA journal_mode=DELETE;")
+                    dest_conn.execute("VACUUM;")
                 finally:
                     dest_conn.close()
 
