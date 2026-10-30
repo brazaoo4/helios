@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.2](https://github.com/brazaoo4/helios/compare/v1.8.1...v1.8.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **security:** remediate white-box audit vulnerabilities HEL-01 through HEL-14 ([1f3d26b](https://github.com/brazaoo4/helios/commit/1f3d26b4cafab4485cba15c20628aac108e4ec84))
+* **security:** remediate white-box audit vulnerabilities HEL-01 through HEL-14 ([54a2b54](https://github.com/brazaoo4/helios/commit/54a2b54a5139e4367161b86a9267f43dc5c5dd7c))
+
 ## [1.8.1](https://github.com/brazaoo4/helios/compare/v1.8.0...v1.8.1) (2026-10-30)
 
 
