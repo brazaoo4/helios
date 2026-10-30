@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.1](https://github.com/brazaoo4/helios/compare/v1.8.0...v1.8.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **polish:** address audit findings for anchors, SQL parameterization, and schema test coverage ([da78fed](https://github.com/brazaoo4/helios/commit/da78fed43fd293106a34463f835d831c410d5c03))
+* **polish:** address audit findings for anchors, SQL parameterization, and schema test coverage ([573565a](https://github.com/brazaoo4/helios/commit/573565af25ad4051c896740c70a143c67c37836c))
+
 ## [1.8.0](https://github.com/brazaoo4/helios/compare/v1.7.4...v1.8.0) (2026-10-30)
 
 
