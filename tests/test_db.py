@@ -777,3 +777,43 @@ def test_db_audit_and_prune_memories():
         row = conn.execute("SELECT status FROM memories WHERE id = ?", (m1["id"],)).fetchone()
         assert row["status"] == "archived"
 
+
+def test_db_package_reexports_contract():
+    """Verify that src.db exports all expected public APIs and types with 100% backward compatibility."""
+    import src.db as db
+
+    expected_symbols = [
+        "SYNONYM_GROUPS",
+        "_normalize_alias_key",
+        "_normalize_repo_path",
+        "build_fts5_query",
+        "db_audit_memories",
+        "db_prune_memories",
+        "delete_runtime_setting",
+        "deprecate_memory",
+        "flag_stale_by_files",
+        "get_connection",
+        "get_data_dir",
+        "get_db_path",
+        "get_runtime_setting",
+        "get_scope_statistics",
+        "init_db",
+        "list_aliases",
+        "list_runtime_settings",
+        "migrate_scope",
+        "now_iso",
+        "prune_expired_episodic",
+        "query_memories",
+        "remove_alias",
+        "resolve_scope",
+        "revalidate_memories",
+        "set_alias",
+        "set_runtime_setting",
+        "upsert_memory",
+    ]
+
+    for sym in expected_symbols:
+        assert hasattr(db, sym), f"src.db is missing re-export for '{sym}'"
+        assert sym in db.__all__, f"'{sym}' not listed in src.db.__all__"
+
+

@@ -26,7 +26,16 @@ The codebase is organized into focused, single-responsibility packages following
 src/
 ├── server.py              # Composition root (< 130 lines) & backward-compatible re-exports
 ├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
-├── db.py                  # SQLite WAL operations, FTS5 BM25 queries, schema migrations
+├── db/                    # Modular SQLite Database Engine
+│   ├── __init__.py        # Re-exports complete engine contract with __all__ (100% backward compatible)
+│   ├── connection.py      # Connection factory, WAL pragmas, DB path resolution, timestamps
+│   ├── schema.py          # Idempotent DDL, triggers, indexes, FTS5 virtual table
+│   ├── settings.py        # Day-2 runtime settings key-value store (runtime_settings)
+│   ├── scopes.py          # Scope aliasing, normalization, stats, cross-scope migration
+│   ├── memories.py        # AUDN write gate, slot supersession, deprecation, revalidation, TTL pruning
+│   ├── search.py          # FTS5 synonym clusters, query building, weighted BM25 ranking
+│   ├── drift.py           # Git anchor file matching, repo path normalization
+│   └── audit.py           # Distillation health scans, slot collision Jaccard analysis, pruning
 ├── exporter.py            # Thread-safe Markdown export mirroring & portable tar.gz backup
 ├── onboarding/            # Automated client onboarding, directive templates, and setup scripts
 │   ├── __init__.py        # Re-exports for onboarding package and backward compatibility
@@ -70,7 +79,7 @@ src/
 | **`src/routes/`** | **HTTP Ingress**: REST route handlers exposing health checks, automated onboarding runbooks, Markdown export catalogs, snapshot downloads, and multi-provider Git push webhooks. |
 | **`src/tools/`** | **MCP Tool Interfaces**: Declares the 11 MCP tools exposed to AI agents, with strict Pydantic schemas, explicit `ToolAnnotations`, and automatic worker-thread execution offloading. |
 | **`src/config.py`** | **Configuration Resolution**: Layered settings manager resolving runtime variables across SQLite `runtime_settings`, host environment variables, and built-in safe defaults. |
-| **`src/db.py`** | **Data Persistence**: SQLite connection factory, WAL pragma enforcement, FTS5 virtual table queries, AUDN slot supersession, and scope migration logic. |
+| **`src/db/`** | **Data Persistence Engine**: Modular SQLite storage layer with WAL concurrency, FTS5 BM25 search, Day-2 runtime settings, scope aliasing/migration, AUDN write gate, Git drift tracking, and distillation auditing. |
 | **`src/exporter.py`** | **Export Pipeline**: Synchronizes database state into disk Markdown files using `_EXPORT_LOCK` and creates consistent snapshots via the SQLite Online Backup API. |
 | **`src/onboarding/`** | **Client Onboarding & Lifecycle**: Generates multi-platform setup/uninstall scripts (Bash, PowerShell), agent directive templates, `/remember` skill definitions, and MCP config snippets across 8 client ecosystems. |
 
