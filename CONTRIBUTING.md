@@ -36,6 +36,32 @@ python -m src.seed --check
 
 ---
 
+## 📂 Repository Layout & Packaging
+
+Helios follows a modular enterprise architecture. Detailed technical design is documented in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**:
+
+```text
+src/
+├── server.py              # Composition root (< 130 lines) assembling ASGI app & re-exports
+├── middleware/            # Security (AuthGate), transport (Hybrid / SSE), and lifespan
+├── routes/                # Starlette HTTP REST routes (health, setup, exports, git_webhooks)
+├── tools/                 # FastMCP tools (base, memory, config, admin)
+├── config.py              # Layered settings engine (SQLite > Env > Defaults)
+├── db.py                  # SQLite WAL operations, FTS5 BM25 queries, schema migrations
+├── exporter.py            # Markdown mirror synchronization & backup archive generation
+├── onboarding.py          # Script generation & multi-client setup runbooks
+├── webhooks.py            # Git provider integrations (GitHub, Forgejo/Gitea, GitLab)
+└── seed.py                # Declarative seed validator & ingestion runner
+
+tests/
+├── conftest.py            # Shared environment & database isolation fixtures
+├── middleware/            # Tests for AuthGate and transport multiplexing
+├── routes/                # Tests for REST routes, health telemetry, and webhooks
+└── tools/                 # Tests for FastMCP tools, schemas, and thread offloading
+```
+
+---
+
 ## 📐 Architectural Guardrails for Contributors
 
 When modifying Helios, you must adhere to the following core invariants:
