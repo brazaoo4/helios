@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.7.3](https://github.com/brazaoo4/helios/compare/v1.7.2...v1.7.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **mcp:** add explicit ToolAnnotations and remove onboarding env false-positives ([0335b15](https://github.com/brazaoo4/helios/commit/0335b151aa87ebb825ce76c1838e42916d7d5070))
+* **mcp:** add explicit ToolAnnotations and remove onboarding env false-positives ([1446bee](https://github.com/brazaoo4/helios/commit/1446beed72c1246d5e0e7f655a2692518d498a5c))
+
 ## [1.7.2](https://github.com/brazaoo4/helios/compare/v1.7.1...v1.7.2) (2026-10-28)
 
 
