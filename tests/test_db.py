@@ -709,3 +709,71 @@ def test_multi_word_fts_stopword_filtering():
     res = query_memories("ticketera", "don't verify the Ticket API on")
     assert len(res) >= 1
     assert res[0]["subject"] == "api"
+
+
+def test_fts5_synonym_expansion_and_bm25_weighting():
+    from src.db import build_fts5_query
+
+    # 1. build_fts5_query expansion
+    q_db = build_fts5_query(["db"])
+    assert '"db"*' in q_db
+    assert '"database"*' in q_db or '"sql"*' in q_db
+
+    q_clean = build_fts5_query(["uniqueidentifier"])
+    assert q_clean == '"uniqueidentifier"*'
+
+    # 2. Synonym matching in query_memories
+    # Fact only contains 'database', agent queries 'db'
+    upsert_memory("syn-test", "fact", "PostgreSQL database listens on 5432", subject="db-slot")
+    res_db = query_memories("syn-test", "db")
+    assert len(res_db) >= 1
+    assert "PostgreSQL database listens on 5432" in res_db[0]["content"]
+
+    # Fact only contains 'bind', agent queries 'port'
+    upsert_memory("syn-test", "fact", "Application will bind to 9000", subject="app-listen")
+    res_port = query_memories("syn-test", "port")
+    assert any("bind to 9000" in r["content"] for r in res_port)
+
+    # 3. BM25 column weighting: subject match ranks higher than content match
+    upsert_memory("bm25-test", "fact", "Regular description mentioning redis server", subject="unrelated-subj")
+    upsert_memory("bm25-test", "fact", "Mentions something else in body", subject="redis")
+    ranked = query_memories("bm25-test", "redis")
+    assert len(ranked) >= 2
+    # The memory with subject="redis" should rank #1 due to 10x subject weight
+    assert ranked[0]["subject"] == "redis"
+
+
+def test_db_audit_and_prune_memories():
+    from src.db import db_audit_memories, db_prune_memories
+
+    # Pre-populate memories
+    m1 = upsert_memory("audit-scope", "fact", "Web UI runs on port 3000", subject="web-port")
+    # Collision candidate
+    upsert_memory("audit-scope", "fact", "Web server listens on port 3000", subject="ui-port")
+
+    # 1. Audit finds collision
+    audit = db_audit_memories(raw_scope="audit-scope")
+    assert audit["total_active"] == 2
+    assert audit["total_words"] > 0
+    assert len(audit["potential_collisions"]) >= 1
+    col = audit["potential_collisions"][0]
+    assert col["mem1"]["id"] == m1["id"] or col["mem2"]["id"] == m1["id"]
+
+    # 2. Stale memory detection in audit
+    with get_connection() as conn:
+        conn.execute("UPDATE memories SET valid_from = '2020-01-01T00:00:00Z', status = 'stale', stale_reason = 'modified' WHERE id = ?", (m1["id"],))
+
+    audit_stale = db_audit_memories(raw_scope="audit-scope", stale_age_days=10)
+    assert len(audit_stale["stale_backlog"]) == 1
+    assert audit_stale["stale_backlog"][0]["id"] == m1["id"]
+
+    # 3. Prune memories
+    prune_res = db_prune_memories(raw_scope="audit-scope", prune_stale=True, stale_age_days=10)
+    assert prune_res["pruned_stale"] == 1
+    assert m1["id"] in prune_res["archived_ids"]
+
+    # After prune, m1 is archived
+    with get_connection() as conn:
+        row = conn.execute("SELECT status FROM memories WHERE id = ?", (m1["id"],)).fetchone()
+        assert row["status"] == "archived"
+

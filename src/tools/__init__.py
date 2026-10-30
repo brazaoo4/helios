@@ -22,6 +22,7 @@ from src.tools.config import (
 from src.tools.memory import (
     COLD_START_ONBOARDING_NOTICE,
     deprecate_memory,
+    distill_memories,
     recall_history,
     recall_memories,
     revalidate_memories,
@@ -36,6 +37,7 @@ __all__ = [
     "ToolAnnotations",
     "TransportSecuritySettings",
     "deprecate_memory",
+    "distill_memories",
     "export_bundle",
     "get_client_setup_bundle",
     "manage_git_webhooks",

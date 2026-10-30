@@ -51,10 +51,10 @@ src/
 │   ├── exports.py         # GET /export/markdown, GET /export/bundle (tar.gz download)
 │   └── git_webhooks.py    # POST /webhook/git, POST /webhook/forgejo (universal Git push ingress)
 │
-└── tools/                 # FastMCP Tools (10 tools with explicit ToolAnnotations)
+└── tools/                 # FastMCP Tools (11 tools with explicit ToolAnnotations)
     ├── __init__.py        # Tool package exports & registration confirmation
     ├── base.py            # FastMCP singleton, instructions, sync thread-offloading monkeypatch
-    ├── memory.py          # recall_memories, save_memory, deprecate_memory, revalidate_memories, recall_history
+    ├── memory.py          # recall_memories, save_memory, deprecate_memory, revalidate_memories, recall_history, distill_memories
     ├── config.py          # manage_server_config, manage_scope_alias
     └── admin.py           # get_client_setup_bundle, export_bundle, manage_git_webhooks
 ```
@@ -68,7 +68,7 @@ src/
 | **`src/middleware/transport.py`** | **Protocol Multiplexing**: Dispatches `/sse` and `/mcp` requests to FastMCP's Streamable HTTP session manager or Server-Sent Events transport, gracefully falling back to standard SSE when stale session IDs are presented. |
 | **`src/middleware/lifespan.py`** | **Lifecycle Management**: Runs on server boot to initialize SQLite WAL, ingest declarative `seed.yaml` / `seed.json` files, run auto-seeding if enabled, and initialize FastMCP's background session runner. |
 | **`src/routes/`** | **HTTP Ingress**: REST route handlers exposing health checks, automated onboarding runbooks, Markdown export catalogs, snapshot downloads, and multi-provider Git push webhooks. |
-| **`src/tools/`** | **MCP Tool Interfaces**: Declares the 10 MCP tools exposed to AI agents, with strict Pydantic schemas, explicit `ToolAnnotations`, and automatic worker-thread execution offloading. |
+| **`src/tools/`** | **MCP Tool Interfaces**: Declares the 11 MCP tools exposed to AI agents, with strict Pydantic schemas, explicit `ToolAnnotations`, and automatic worker-thread execution offloading. |
 | **`src/config.py`** | **Configuration Resolution**: Layered settings manager resolving runtime variables across SQLite `runtime_settings`, host environment variables, and built-in safe defaults. |
 | **`src/db.py`** | **Data Persistence**: SQLite connection factory, WAL pragma enforcement, FTS5 virtual table queries, AUDN slot supersession, and scope migration logic. |
 | **`src/exporter.py`** | **Export Pipeline**: Synchronizes database state into disk Markdown files using `_EXPORT_LOCK` and creates consistent snapshots via the SQLite Online Backup API. |
@@ -184,7 +184,7 @@ erDiagram
 
 ### Storage Invariants:
 1. **WAL Mode**: `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` ensure write transactions do not block concurrent readers.
-2. **Full-Text Search Indexing**: Virtual table `memories_fts` using SQLite FTS5 indexes `content`, `subject`, and `scope` with the Porter stemmer.
+2. **Full-Text Search & Synonym Expansion**: Virtual table `memories_fts` using SQLite FTS5 indexes `scope`, `subject`, and `content`. Queries automatically expand across 10 developer/DevOps domain clusters (databases, networking, auth, env, git, etc.) and rank via column-weighted BM25 (`bm25(memories_fts, 5.0, 10.0, 1.0)`) prioritizing slot subjects and scopes over body content.
 3. **Markdown Export Locking**: All writes to disk Markdown files (`/data/exports/<scope>.md`) acquire an in-process threading lock (`_EXPORT_LOCK`) to guarantee sequential, uncorrupted writes.
 4. **Online Backup API**: `/export/bundle` and `export_bundle()` utilize the SQLite C-level Online Backup API (`src_conn.backup(dest_conn)`) to create live snapshots without locking readers or writers.
 
