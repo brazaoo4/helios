@@ -539,6 +539,22 @@ def test_runtime_settings_crud():
     # 6. Delete nonexistent key returns False
     assert delete_runtime_setting("NONEXISTENT_KEY") is False
 
+    # 7. Empty or blank keys validation
+    assert get_runtime_setting("   ") is None
+    assert delete_runtime_setting("   ") is False
+    with pytest.raises(ValueError, match="cannot be empty"):
+        set_runtime_setting("  ", "val")
+
+    # 8. Operational error failsafes
+    import sqlite3
+    import unittest.mock as mock
+
+    with mock.patch("src.db.settings.get_connection") as mock_conn:
+        mock_conn.side_effect = sqlite3.OperationalError("Table locked")
+        assert get_runtime_setting("ANY_KEY") is None
+        assert delete_runtime_setting("ANY_KEY") is False
+        assert list_runtime_settings() == {}
+
 
 def test_layered_config_resolution(monkeypatch):
     # 1. Default resolution (no env, no db)

@@ -18,6 +18,7 @@ def test_fastmcp_tool_schema_descriptions():
         "deprecate_memory",
         "recall_history",
         "revalidate_memories",
+        "distill_memories",
         "manage_scope_alias",
         "export_bundle",
         "manage_git_webhooks",
@@ -25,6 +26,14 @@ def test_fastmcp_tool_schema_descriptions():
         "manage_server_config",
     }
     assert expected_tools.issubset(set(tool_map.keys()))
+
+    # Inspect distill_memories schema
+    distill_tool = tool_map["distill_memories"]
+    distill_props = distill_tool.inputSchema.get("properties", {})
+    assert "scope" in distill_props
+    assert "action" in distill_props
+    assert "dry_run" in distill_props
+    assert "stale_age_days" in distill_props
 
     # Inspect manage_server_config schema
     cfg_tool = tool_map["manage_server_config"]
