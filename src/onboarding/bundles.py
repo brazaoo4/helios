@@ -11,6 +11,7 @@ from src.onboarding.client_config import (
     get_mcp_config_snippet,
     normalize_os_platform,
     resolve_server_base_url,
+    validate_onboarding_params,
 )
 from src.onboarding.templates import (
     generate_global_directive,
@@ -29,6 +30,7 @@ def generate_client_bundle(
     Generate client setup payload for the get_client_setup_bundle MCP tool.
     Supports action='install_or_update', 'switch_role', or 'uninstall'.
     """
+    instance_role, client = validate_onboarding_params(instance_role, client)
     act = (action or "install_or_update").strip().lower()
     plat = normalize_os_platform(os_platform)
     resolved_base = base_url or resolve_server_base_url()

@@ -3,6 +3,11 @@
 import urllib.parse
 
 from src.config import get_word_limit
+from src.onboarding.client_config import (
+    escape_bash_single_quote,
+    escape_ps_single_quote,
+    validate_onboarding_params,
+)
 from src.onboarding.templates import (
     generate_global_directive,
     generate_guard_hook_script,
@@ -21,6 +26,7 @@ def generate_setup_powershell(
     Usage: irm https://<host>/setup.ps1 | iex
     Handles NTFS symlinks, CRLF line endings, multi-client auto-detection, and idempotent marker replacement.
     """
+    role_norm, client_norm = validate_onboarding_params(instance_role, client)
     clean_base = base_url.rstrip("/")
     token_suffix = ""
     if query_token and query_token.strip():
@@ -28,14 +34,24 @@ def generate_setup_powershell(
     mcp_url = f"{clean_base}/mcp{token_suffix}"
     sse_url = f"{clean_base}/sse{token_suffix}"
     active_limit = get_word_limit()
-    directive = generate_global_directive(instance_role, word_limit=active_limit).strip()
+    directive = generate_global_directive(role_norm, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
-    role_norm = instance_role.strip().lower()
-    client_norm = client.strip().lower()
+
+    esc_base = escape_ps_single_quote(clean_base)
+    esc_role = escape_ps_single_quote(role_norm)
+    esc_client = escape_ps_single_quote(client_norm)
+    esc_mcp = escape_ps_single_quote(mcp_url)
+    esc_sse = escape_ps_single_quote(sse_url)
 
     return f"""# Helios Automated Client Setup for Windows PowerShell
 $ErrorActionPreference = 'Stop'
-Write-Host "Configuring Helios client environment for {clean_base} (role: {role_norm})..." -ForegroundColor Cyan
+$targetBase = '{esc_base}'
+$targetRole = '{esc_role}'
+$targetClient = '{esc_client}'
+$mcpUrl = '{esc_mcp}'
+$sseUrl = '{esc_sse}'
+
+Write-Host "Configuring Helios client environment for $targetBase (role: {role_norm})..." -ForegroundColor Cyan
 
 $directiveText = @'
 {directive}
@@ -78,14 +94,14 @@ if (Test-Path $mcpConfigPath) {{
 if (-not $mcpData.ContainsKey("mcpServers") -or $null -eq $mcpData.mcpServers) {{
     $mcpData.mcpServers = @{{}}
 }}
-$mcpData.mcpServers["helios"] = @{{ url = "{mcp_url}" }}
+$mcpData.mcpServers["helios"] = @{{ url = $mcpUrl }}
 $mcpJson = $mcpData | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($mcpConfigPath, $mcpJson, [System.Text.Encoding]::UTF8)
 Write-Host "  [OK] Antigravity MCP registered in $mcpConfigPath" -ForegroundColor Green
 
 # 2. Cursor MCP Configuration (if %USERPROFILE%\\.cursor exists or client is cursor/all)
 $cursorDir = Join-Path $env:USERPROFILE ".cursor"
-if ((Test-Path $cursorDir) -or "{client_norm}" -eq "cursor" -or "{client_norm}" -eq "all") {{
+if ((Test-Path $cursorDir) -or $targetClient -eq "cursor" -or $targetClient -eq "all") {{
     if (-not (Test-Path $cursorDir)) {{ New-Item -ItemType Directory -Path $cursorDir -Force | Out-Null }}
     $cursorMcpPath = Join-Path $cursorDir "mcp.json"
     $cursorData = @{{ mcpServers = @{{}} }}
@@ -96,7 +112,7 @@ if ((Test-Path $cursorDir) -or "{client_norm}" -eq "cursor" -or "{client_norm}" 
         }} catch {{}}
     }}
     if (-not $cursorData.ContainsKey("mcpServers") -or $null -eq $cursorData.mcpServers) {{ $cursorData.mcpServers = @{{}} }}
-    $cursorData.mcpServers["helios"] = @{{ url = "{sse_url}" }}
+    $cursorData.mcpServers["helios"] = @{{ url = $sseUrl }}
     $cursorJson = $cursorData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($cursorMcpPath, $cursorJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] Cursor MCP registered in $cursorMcpPath" -ForegroundColor Green
@@ -107,7 +123,7 @@ if ((Test-Path $cursorDir) -or "{client_norm}" -eq "cursor" -or "{client_norm}" 
 
 # 3. Claude Desktop Configuration (if %APPDATA%\\Claude exists or client is claude-desktop/all)
 $claudeDir = Join-Path $env:APPDATA "Claude"
-if ((Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop") {{
+if ((Test-Path $claudeDir) -or $targetClient -eq "claude-desktop") {{
     if (-not (Test-Path $claudeDir)) {{ New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null }}
     $claudeMcpPath = Join-Path $claudeDir "claude_desktop_config.json"
     $claudeData = @{{ mcpServers = @{{}} }}
@@ -118,14 +134,14 @@ if ((Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop") {{
         }} catch {{}}
     }}
     if (-not $claudeData.ContainsKey("mcpServers") -or $null -eq $claudeData.mcpServers) {{ $claudeData.mcpServers = @{{}} }}
-    $claudeData.mcpServers["helios"] = @{{ command = "npx"; args = @("-y", "mcp-remote", "{sse_url}") }}
+    $claudeData.mcpServers["helios"] = @{{ command = "npx"; args = @("-y", "mcp-remote", $sseUrl) }}
     $claudeJson = $claudeData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($claudeMcpPath, $claudeJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] Claude Desktop MCP registered in $claudeMcpPath" -ForegroundColor Green
 }}
 
 $claudeDotDir = Join-Path $env:USERPROFILE ".claude"
-if ((Test-Path $claudeDotDir) -or (Test-Path $claudeDir) -or "{client_norm}" -eq "claude-desktop" -or "{client_norm}" -eq "claude-code") {{
+if ((Test-Path $claudeDotDir) -or (Test-Path $claudeDir) -or $targetClient -eq "claude-desktop" -or $targetClient -eq "claude-code") {{
     $claudeMdPath = Join-Path $claudeDotDir "CLAUDE.md"
     Set-HeliosDirective -FilePath $claudeMdPath
     Write-Host "  [OK] Claude directive embedded in $claudeMdPath" -ForegroundColor Green
@@ -133,14 +149,14 @@ if ((Test-Path $claudeDotDir) -or (Test-Path $claudeDir) -or "{client_norm}" -eq
 
 # 4. OpenAI Codex CLI Configuration (~/.codex/config.toml & ~/.codex/AGENTS.md)
 $codexDir = Join-Path $env:USERPROFILE ".codex"
-if ((Test-Path $codexDir) -or "{client_norm}" -eq "codex") {{
+if ((Test-Path $codexDir) -or $targetClient -eq "codex") {{
     if (-not (Test-Path $codexDir)) {{ New-Item -ItemType Directory -Path $codexDir -Force | Out-Null }}
     $codexTomlPath = Join-Path $codexDir "config.toml"
-    $tomlBlock = "[mcp_servers.helios]`r`nurl = `"{mcp_url}`""
+    $tomlBlock = "[mcp_servers.helios]`r`nurl = `"$mcpUrl`""
     if (Test-Path $codexTomlPath) {{
         $tContent = [System.IO.File]::ReadAllText($codexTomlPath, [System.Text.Encoding]::UTF8)
         if ($tContent -match '(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\z)') {{
-            $tContent = [regex]::Replace($tContent, '(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\z)', ($tomlBlock + "`r`n"))
+            $tContent = [regex]::Replace($tContent, '(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\z)', {{ param($m) $tomlBlock + "`r`n" }})
         }} else {{
             $tContent = $tContent.TrimEnd() + "`r`n`r`n" + $tomlBlock + "`r`n"
         }}
@@ -156,7 +172,7 @@ if ((Test-Path $codexDir) -or "{client_norm}" -eq "codex") {{
 
 # 5. Windsurf Configuration (~/.codeium/windsurf/mcp_config.json & global_rules.md)
 $windsurfDir = Join-Path $env:USERPROFILE ".codeium\\windsurf"
-if ((Test-Path $windsurfDir) -or "{client_norm}" -eq "windsurf") {{
+if ((Test-Path $windsurfDir) -or $targetClient -eq "windsurf") {{
     if (-not (Test-Path $windsurfDir)) {{ New-Item -ItemType Directory -Path $windsurfDir -Force | Out-Null }}
     $windsurfMcpPath = Join-Path $windsurfDir "mcp_config.json"
     $wsData = @{{ mcpServers = @{{}} }}
@@ -167,7 +183,7 @@ if ((Test-Path $windsurfDir) -or "{client_norm}" -eq "windsurf") {{
         }} catch {{}}
     }}
     if (-not $wsData.ContainsKey("mcpServers") -or $null -eq $wsData.mcpServers) {{ $wsData.mcpServers = @{{}} }}
-    $wsData.mcpServers["helios"] = @{{ serverUrl = "{mcp_url}" }}
+    $wsData.mcpServers["helios"] = @{{ serverUrl = $mcpUrl }}
     $wsJson = $wsData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($windsurfMcpPath, $wsJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] Windsurf MCP registered in $windsurfMcpPath" -ForegroundColor Green
@@ -178,7 +194,7 @@ if ((Test-Path $windsurfDir) -or "{client_norm}" -eq "windsurf") {{
 
 # 6. VS Code / GitHub Copilot (%APPDATA%\\Code\\User\\mcp.json & ~/.github/copilot-instructions.md)
 $vscodeDir = Join-Path $env:APPDATA "Code\\User"
-if ((Test-Path $vscodeDir) -or "{client_norm}" -eq "vscode") {{
+if ((Test-Path $vscodeDir) -or $targetClient -eq "vscode") {{
     if (-not (Test-Path $vscodeDir)) {{ New-Item -ItemType Directory -Path $vscodeDir -Force | Out-Null }}
     $vscodeMcpPath = Join-Path $vscodeDir "mcp.json"
     $vscData = @{{ servers = @{{}} }}
@@ -189,7 +205,7 @@ if ((Test-Path $vscodeDir) -or "{client_norm}" -eq "vscode") {{
         }} catch {{}}
     }}
     if (-not $vscData.ContainsKey("servers") -or $null -eq $vscData.servers) {{ $vscData.servers = @{{}} }}
-    $vscData.servers["helios"] = @{{ type = "http"; url = "{mcp_url}" }}
+    $vscData.servers["helios"] = @{{ type = "http"; url = $mcpUrl }}
     $vscJson = $vscData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($vscodeMcpPath, $vscJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] VS Code MCP registered in $vscodeMcpPath" -ForegroundColor Green
@@ -200,7 +216,7 @@ if ((Test-Path $vscodeDir) -or "{client_norm}" -eq "vscode") {{
 
 # 7. OpenCode Configuration (~/.config/opencode/opencode.json & AGENTS.md)
 $opencodeDir = Join-Path $env:USERPROFILE ".config\\opencode"
-if ((Test-Path $opencodeDir) -or "{client_norm}" -eq "opencode") {{
+if ((Test-Path $opencodeDir) -or $targetClient -eq "opencode") {{
     if (-not (Test-Path $opencodeDir)) {{ New-Item -ItemType Directory -Path $opencodeDir -Force | Out-Null }}
     $opencodeMcpPath = Join-Path $opencodeDir "opencode.json"
     $ocData = @{{ '$schema' = "https://opencode.ai/config.json"; mcp = @{{}} }}
@@ -211,7 +227,7 @@ if ((Test-Path $opencodeDir) -or "{client_norm}" -eq "opencode") {{
         }} catch {{}}
     }}
     if (-not $ocData.ContainsKey("mcp") -or $null -eq $ocData.mcp) {{ $ocData["mcp"] = @{{}} }}
-    $ocData.mcp["helios"] = @{{ type = "remote"; url = "{mcp_url}"; enabled = $true }}
+    $ocData.mcp["helios"] = @{{ type = "remote"; url = $mcpUrl; enabled = $true }}
     $ocJson = $ocData | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($opencodeMcpPath, $ocJson, [System.Text.Encoding]::UTF8)
     Write-Host "  [OK] OpenCode MCP registered in $opencodeMcpPath" -ForegroundColor Green
@@ -256,6 +272,7 @@ def generate_setup_bash(
     Usage: curl -fsSL https://<host>/setup.sh | bash
     Handles multi-client auto-detection, POSIX symlinks, and idempotent marker replacement.
     """
+    role_norm, client_norm = validate_onboarding_params(instance_role, client)
     clean_base = base_url.rstrip("/")
     token_suffix = ""
     if query_token and query_token.strip():
@@ -263,16 +280,26 @@ def generate_setup_bash(
     mcp_url = f"{clean_base}/mcp{token_suffix}"
     sse_url = f"{clean_base}/sse{token_suffix}"
     active_limit = get_word_limit()
-    directive = generate_global_directive(instance_role, word_limit=active_limit).strip()
+    directive = generate_global_directive(role_norm, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
     guard_script = generate_guard_hook_script().strip()
-    role_norm = instance_role.strip().lower()
-    client_norm = client.strip().lower()
+
+    esc_base = escape_bash_single_quote(clean_base)
+    esc_role = escape_bash_single_quote(role_norm)
+    esc_client = escape_bash_single_quote(client_norm)
+    esc_mcp = escape_bash_single_quote(mcp_url)
+    esc_sse = escape_bash_single_quote(sse_url)
 
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 
-echo "Configuring Helios client environment for {clean_base} (role: {role_norm})..."
+CLEAN_BASE='{esc_base}'
+ROLE_NORM='{esc_role}'
+CLIENT_NORM='{esc_client}'
+MCP_URL='{esc_mcp}'
+SSE_URL='{esc_sse}'
+
+echo "Configuring Helios client environment for $CLEAN_BASE (role: {role_norm})..."
 
 DIRECTIVE_CONTENT="$(cat <<'HELIOS_DIRECTIVE_EOF'
 {directive}
@@ -311,7 +338,6 @@ PYEOF
 CONFIG_DIR="$HOME/.gemini/config"
 mkdir -p "$CONFIG_DIR"
 MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
-MCP_URL="{mcp_url}"
 
 python3 - "$MCP_CONFIG" "$MCP_URL" <<'PYEOF'
 import json, os, sys
@@ -334,10 +360,9 @@ echo "  [OK] Antigravity MCP registered in $MCP_CONFIG"
 
 # 2. Cursor MCP Configuration (if ~/.cursor exists or client is cursor/all)
 CURSOR_DIR="$HOME/.cursor"
-if [ -d "$CURSOR_DIR" ] || [ "{client_norm}" = "cursor" ] || [ "{client_norm}" = "all" ]; then
+if [ -d "$CURSOR_DIR" ] || [ "$CLIENT_NORM" = "cursor" ] || [ "$CLIENT_NORM" = "all" ]; then
     mkdir -p "$CURSOR_DIR"
     CURSOR_MCP="$CURSOR_DIR/mcp.json"
-    SSE_URL="{sse_url}"
     python3 - "$CURSOR_MCP" "$SSE_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
@@ -362,10 +387,9 @@ fi
 
 # 3. Claude Desktop Configuration (if directory exists or client is claude-desktop/all)
 for CLAUDE_BASE in "$HOME/.config/Claude" "$HOME/Library/Application Support/Claude"; do
-    if [ -d "$CLAUDE_BASE" ] || [ "{client_norm}" = "claude-desktop" ]; then
+    if [ -d "$CLAUDE_BASE" ] || [ "$CLIENT_NORM" = "claude-desktop" ]; then
         mkdir -p "$CLAUDE_BASE"
         CLAUDE_MCP="$CLAUDE_BASE/claude_desktop_config.json"
-        SSE_URL="{sse_url}"
         python3 - "$CLAUDE_MCP" "$SSE_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
@@ -390,30 +414,29 @@ done
 
 # 4. Claude Code CLI (if claude CLI binary exists in PATH or client matches)
 if command -v claude >/dev/null 2>&1; then
-    claude mcp add --transport sse helios "{sse_url}" >/dev/null 2>&1 || true
+    claude mcp add --transport sse helios "$SSE_URL" >/dev/null 2>&1 || true
     echo "  [OK] Claude Code CLI MCP registered"
 fi
-if [ -d "$HOME/.claude" ] || command -v claude >/dev/null 2>&1 || [ "{client_norm}" = "claude-code" ] || [ "{client_norm}" = "claude-desktop" ]; then
+if [ -d "$HOME/.claude" ] || command -v claude >/dev/null 2>&1 || [ "$CLIENT_NORM" = "claude-code" ] || [ "$CLIENT_NORM" = "claude-desktop" ]; then
     inject_directive "$HOME/.claude/CLAUDE.md"
     echo "  [OK] Claude directive embedded in $HOME/.claude/CLAUDE.md"
 fi
 
 # 5. OpenAI Codex CLI (if ~/.codex or codex binary exists or client is codex)
 CODEX_DIR="$HOME/.codex"
-if [ -d "$CODEX_DIR" ] || command -v codex >/dev/null 2>&1 || [ "{client_norm}" = "codex" ]; then
+if [ -d "$CODEX_DIR" ] || command -v codex >/dev/null 2>&1 || [ "$CLIENT_NORM" = "codex" ]; then
     mkdir -p "$CODEX_DIR"
     CODEX_TOML="$CODEX_DIR/config.toml"
-    MCP_URL="{mcp_url}"
     python3 - "$CODEX_TOML" "$MCP_URL" <<'PYEOF'
 import os, re, sys
 path = sys.argv[1]
 mcp_url = sys.argv[2]
-block = f"[mcp_servers.helios]\\nurl = \\"{mcp_url}\\"\\n"
+block = "[mcp_servers.helios]\\nurl = \\"" + mcp_url + "\\"\\n"
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
     if re.search(r'(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\Z)', content):
-        content = re.sub(r'(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\Z)', block, content)
+        content = re.sub(r'(?ms)^\\[mcp_servers\\.helios\\].*?(?=^\\[|\\Z)', lambda _: block, content)
     else:
         content = content.rstrip() + "\\n\\n" + block
     with open(path, 'w', encoding='utf-8') as f:
@@ -429,10 +452,9 @@ fi
 
 # 6. Windsurf Configuration (if ~/.codeium/windsurf exists or client is windsurf)
 WINDSURF_DIR="$HOME/.codeium/windsurf"
-if [ -d "$WINDSURF_DIR" ] || [ "{client_norm}" = "windsurf" ]; then
+if [ -d "$WINDSURF_DIR" ] || [ "$CLIENT_NORM" = "windsurf" ]; then
     mkdir -p "$WINDSURF_DIR"
     WINDSURF_MCP="$WINDSURF_DIR/mcp_config.json"
-    MCP_URL="{mcp_url}"
     python3 - "$WINDSURF_MCP" "$MCP_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
@@ -457,10 +479,9 @@ fi
 
 # 7. VS Code / GitHub Copilot (if Code/User dir exists or client is vscode)
 for VSCODE_BASE in "$HOME/.config/Code/User" "$HOME/Library/Application Support/Code/User"; do
-    if [ -d "$VSCODE_BASE" ] || [ "{client_norm}" = "vscode" ]; then
+    if [ -d "$VSCODE_BASE" ] || [ "$CLIENT_NORM" = "vscode" ]; then
         mkdir -p "$VSCODE_BASE"
         VSCODE_MCP="$VSCODE_BASE/mcp.json"
-        MCP_URL="{mcp_url}"
         python3 - "$VSCODE_MCP" "$MCP_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
@@ -487,10 +508,9 @@ done
 
 # 8. OpenCode Configuration (if ~/.config/opencode or opencode binary exists or client is opencode)
 OPENCODE_DIR="$HOME/.config/opencode"
-if [ -d "$OPENCODE_DIR" ] || command -v opencode >/dev/null 2>&1 || [ "{client_norm}" = "opencode" ]; then
+if [ -d "$OPENCODE_DIR" ] || command -v opencode >/dev/null 2>&1 || [ "$CLIENT_NORM" = "opencode" ]; then
     mkdir -p "$OPENCODE_DIR"
     OPENCODE_MCP="$OPENCODE_DIR/opencode.json"
-    MCP_URL="{mcp_url}"
     python3 - "$OPENCODE_MCP" "$MCP_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]

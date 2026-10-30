@@ -5,6 +5,7 @@ Handles scope normalization, alias mapping, scope hierarchy flattening,
 and cross-scope memory migration.
 """
 
+import re
 import sqlite3
 from typing import Any
 
@@ -13,11 +14,15 @@ from src.db.connection import get_connection, get_db_path, now_iso
 
 def _normalize_alias_key(raw_alias: str) -> str:
     """Normalize an alias or raw folder path into a clean lowercase lookup key."""
-    if not raw_alias or not raw_alias.strip():
+    if not raw_alias or not str(raw_alias).strip():
         return ""
-    normalized = raw_alias.strip().replace("\\", "/").rstrip("/")
+    normalized = str(raw_alias).strip().replace("\\", "/").rstrip("/")
     folder_name = normalized.split("/")[-1].lower()
-    folder_name = folder_name.removesuffix(".git")
+    while folder_name.endswith(".git"):
+        folder_name = folder_name.removesuffix(".git")
+    if folder_name in ("", ".", "..") or any(ord(c) < 32 for c in folder_name):
+        return ""
+    folder_name = re.sub(r"[^a-z0-9._-]", "-", folder_name).strip(".-")
     return folder_name
 
 
@@ -67,6 +72,8 @@ def set_alias(alias: str, canonical_scope: str) -> None:
         raise ValueError("Canonical scope cannot be empty.")
     if clean_alias == "global":
         raise ValueError("Cannot alias or migrate the reserved 'global' scope.")
+    if clean_scope == "global":
+        raise ValueError("Cannot map a project alias directly to the reserved 'global' scope.")
     if clean_alias == clean_scope:
         raise ValueError("Alias and canonical_scope cannot be identical.")
 
@@ -80,6 +87,13 @@ def set_alias(alias: str, canonical_scope: str) -> None:
         ).fetchone()
         if target_row:
             clean_scope = target_row["canonical_scope"]
+        if clean_alias == clean_scope:
+            conn.execute("DELETE FROM scope_aliases WHERE alias = ?", (clean_alias,))
+            orig_target = _normalize_alias_key(canonical_scope)
+            if orig_target and orig_target != clean_alias and orig_target != "global":
+                clean_scope = orig_target
+            else:
+                raise ValueError("Alias and resolved canonical_scope cannot be identical.")
 
         conn.execute(
             """
@@ -202,6 +216,18 @@ def migrate_scope(from_scope: str, to_scope: str, register_alias: bool = True) -
     ts = now_iso()
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
+
+        # Resolve target to canonical scope if aliased
+        target_row = conn.execute(
+            "SELECT canonical_scope FROM scope_aliases WHERE alias = ?",
+            (to_clean,),
+        ).fetchone()
+        if target_row:
+            to_clean = target_row["canonical_scope"]
+        if from_clean == to_clean:
+            raise ValueError("Source and target scopes cannot be identical.")
+        if to_clean == "global" and register_alias:
+            raise ValueError("Cannot register an alias pointing to the reserved 'global' scope.")
 
         # 1. Resolve active slot collisions for non-empty subjects
         colliding_rows = conn.execute(

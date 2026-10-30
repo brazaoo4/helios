@@ -18,6 +18,37 @@ SUPPORTED_CLIENTS: tuple[str, ...] = (
     "opencode",
 )
 
+VALID_CLIENTS: tuple[str, ...] = SUPPORTED_CLIENTS + ("all",)
+VALID_ROLES: tuple[str, ...] = ("workstation", "server-cli")
+
+
+def validate_onboarding_params(
+    instance_role: str | None = None,
+    client: str | None = None,
+) -> tuple[str, str]:
+    """Validate and normalize instance_role and client against allowed identifiers."""
+    norm_role = (instance_role or "workstation").strip().lower()
+    if norm_role not in VALID_ROLES:
+        raise ValueError(
+            f"Invalid instance_role: '{instance_role}'. Must be one of: {', '.join(VALID_ROLES)}"
+        )
+    norm_client = (client or "all").strip().lower()
+    if norm_client not in VALID_CLIENTS:
+        raise ValueError(
+            f"Invalid client: '{client}'. Must be one of: {', '.join(VALID_CLIENTS)}"
+        )
+    return norm_role, norm_client
+
+
+def escape_ps_single_quote(s: str) -> str:
+    """Escape string for single-quoted PowerShell string literal."""
+    return s.replace("'", "''")
+
+
+def escape_bash_single_quote(s: str) -> str:
+    """Escape string for single-quoted Bash string literal."""
+    return s.replace("'", "'\\''")
+
 
 def resolve_server_base_url(headers: dict[str, str] | None = None) -> str:
     """
@@ -39,8 +70,7 @@ def resolve_server_base_url(headers: dict[str, str] | None = None) -> str:
 
         raw_host = norm_headers.get("x-forwarded-host") or norm_headers.get("host") or "localhost:8000"
         host = raw_host.split(",")[0].strip()
-        host = re.sub(r"""["'`\s;]""", "", host)
-        if not host:
+        if not host or not re.fullmatch(r"[a-zA-Z0-9._:\[\]-]+", host):
             host = "localhost:8000"
 
         return f"{proto}://{host}".rstrip("/")
@@ -230,9 +260,14 @@ def get_mcp_config_snippet(
 
 __all__ = [
     "SUPPORTED_CLIENTS",
+    "VALID_CLIENTS",
+    "VALID_ROLES",
+    "escape_bash_single_quote",
+    "escape_ps_single_quote",
     "get_directive_path",
     "get_mcp_config_path",
     "get_mcp_config_snippet",
     "normalize_os_platform",
     "resolve_server_base_url",
+    "validate_onboarding_params",
 ]

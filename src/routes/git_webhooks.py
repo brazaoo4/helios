@@ -10,7 +10,7 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from src.config import get_webhook_secret
+from src.config import get_api_key, get_webhook_secret
 from src.db import flag_stale_by_files
 from src.exporter import sync_markdown_exports
 from src.middleware.auth import MAX_WEBHOOK_BYTES, _read_bounded_body
@@ -29,7 +29,9 @@ def verify_forgejo_signature(
     sig_clean = signature_header.strip()
     if sig_clean.startswith("sha256="):
         sig_clean = sig_clean[7:].strip()
-    return hmac.compare_digest(expected_signature, sig_clean)
+    return hmac.compare_digest(
+        expected_signature.encode("utf-8"), sig_clean.encode("utf-8")
+    )
 
 
 def verify_github_signature(
@@ -48,7 +50,9 @@ def verify_github_signature(
             digestmod=hashlib.sha256,
         ).hexdigest()
     )
-    return hmac.compare_digest(expected_signature, sig_clean)
+    return hmac.compare_digest(
+        expected_signature.encode("utf-8"), sig_clean.encode("utf-8")
+    )
 
 
 def _detect_webhook_provider_and_verify(
@@ -162,9 +166,12 @@ async def git_webhook(request: Request) -> JSONResponse:
         )
 
     webhook_secret = get_webhook_secret()
-    require_secret = os.getenv(
-        "HELIOS_REQUIRE_WEBHOOK_SECRET", "false"
-    ).lower() in ("1", "true", "yes")
+    has_api_key = get_api_key() is not None
+    req_sec_env = os.getenv("HELIOS_REQUIRE_WEBHOOK_SECRET")
+    if req_sec_env is None:
+        require_secret = has_api_key
+    else:
+        require_secret = req_sec_env.lower() in ("1", "true", "yes")
 
     if require_secret and not webhook_secret:
         return JSONResponse(

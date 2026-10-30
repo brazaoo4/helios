@@ -24,6 +24,7 @@ def init_db() -> None:
                 content TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'stale', 'superseded', 'archived')),
                 stale_reason TEXT DEFAULT '',
+                stale_since TEXT DEFAULT NULL,
                 anchor_files TEXT DEFAULT '[]',
                 superseded_by INTEGER REFERENCES memories(id),
                 valid_from TEXT NOT NULL,
@@ -75,3 +76,7 @@ def init_db() -> None:
             );
             """
         )
+        try:
+            conn.execute("ALTER TABLE memories ADD COLUMN stale_since TEXT DEFAULT NULL;")
+        except Exception:
+            pass

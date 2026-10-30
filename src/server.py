@@ -1,5 +1,7 @@
 """Helios: Token-budgeted, drift-aware MCP memory engine composition root."""
 
+from typing import Any
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -62,17 +64,39 @@ from src.webhooks import (
     list_repo_webhooks,
 )
 
+class DynamicCORSMiddleware(CORSMiddleware):
+    """Dynamic CORS middleware resolving allowed origins at request time."""
+
+    def __init__(self, app_inst: Any, **kwargs: Any) -> None:
+        super().__init__(
+            app_inst,
+            allow_origins=(),
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["*"],
+            **kwargs,
+        )
+
+    def is_allowed_origin(self, origin: str) -> bool:
+        allowed = get_allowed_origins()
+        if "*" in allowed:
+            return True
+        return origin.lower() in [o.lower() for o in allowed]
+
+    def allow_explicit_origin(self, headers: Any, origin: str) -> None:
+        allowed = get_allowed_origins()
+        if "*" in allowed:
+            headers["Access-Control-Allow-Origin"] = "*"
+        else:
+            headers["Access-Control-Allow-Origin"] = origin
+        headers.add_vary_header("Origin")
+
+
 # Assemble Starlette ASGI Application
 app = Starlette(
     routes=starlette_routes,
     lifespan=lifespan,
     middleware=[
-        Middleware(
-            CORSMiddleware,
-            allow_origins=get_allowed_origins(),
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            allow_headers=["*"],
-        ),
+        Middleware(DynamicCORSMiddleware),
         Middleware(AuthGateMiddleware),
     ],
 )

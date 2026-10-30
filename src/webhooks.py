@@ -5,7 +5,9 @@ Provides provider-agnostic repository discovery, noise filtering, and drift
 webhook lifecycle management across Forgejo, Gitea, GitHub, and GitLab.
 """
 
+import ipaddress
 import os
+import socket
 import urllib.parse
 from typing import Any
 
@@ -19,6 +21,7 @@ from src.config import (
     get_webhook_secret,
     get_webhook_url,
     resolve_setting_with_source,
+    validate_http_url,
 )
 from src.db import get_connection, list_aliases, resolve_scope
 
@@ -137,22 +140,24 @@ def fetch_candidate_repositories(
             params: dict[str, Any] = {"affiliation": "owner", "per_page": per_page, "page": page}
             res = client.get(url, params=params)
             if res.status_code != 200 and target_owner:
-                # Try org repos if user/repos didn't return org-owned
-                url = f"{api_url}/orgs/{target_owner}/repos"
+                enc_owner = urllib.parse.quote(target_owner, safe="")
+                url = f"{api_url}/orgs/{enc_owner}/repos"
                 res = client.get(url, params={"per_page": per_page, "page": page})
         elif p == "gitlab":
             url = f"{api_url}/projects"
             params = {"owned": "true", "per_page": per_page, "page": page}
             res = client.get(url, params=params)
             if res.status_code != 200 and target_owner:
-                url = f"{api_url}/groups/{target_owner}/projects"
+                enc_owner = urllib.parse.quote(target_owner, safe="")
+                url = f"{api_url}/groups/{enc_owner}/projects"
                 res = client.get(url, params={"per_page": per_page, "page": page})
         else:  # forgejo, gitea
             url = f"{api_url}/user/repos"
             params = {"limit": per_page, "page": page}
             res = client.get(url, params=params)
             if res.status_code != 200 and target_owner:
-                url = f"{api_url}/orgs/{target_owner}/repos"
+                enc_owner = urllib.parse.quote(target_owner, safe="")
+                url = f"{api_url}/orgs/{enc_owner}/repos"
                 res = client.get(url, params={"limit": per_page, "page": page})
 
         if res.status_code != 200:
@@ -206,27 +211,66 @@ def fetch_candidate_repositories(
     return repos
 
 
-def _verify_token_destination_allowed(target_api_url: str, explicit_token: str | None = None) -> None:
+def _assert_safe_outbound_url(url: str) -> None:
+    """Validate destination URL and ensure resolved IP addresses do not target forbidden ranges."""
+    clean_url = validate_http_url(url, allow_loopback=False)
+    parsed = urllib.parse.urlsplit(clean_url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL must include a valid hostname.")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        addr_info = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+        for _, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            v4 = ip.ipv4_mapped if (isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped) else ip
+            if ip.is_link_local or v4.is_link_local or ip_str.startswith("169.254.") or str(v4) == "100.100.100.200":
+                raise ValueError(f"Destination IP '{ip_str}' is forbidden.")
+            in_zero_net = isinstance(v4, ipaddress.IPv4Address) and v4 in ipaddress.ip_network("0.0.0.0/8")
+            if ip.is_loopback or v4.is_loopback or ip.is_unspecified or in_zero_net:
+                raise ValueError(f"Destination IP '{ip_str}' is forbidden.")
+    except (socket.gaierror, OSError):
+        pass
+
+
+def _validate_repo_ident(owner: str, name: str) -> None:
+    if not owner or owner in (".", "..") or "/" in owner or "\\" in owner:
+        raise ValueError(f"Invalid repository owner: {owner!r}")
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise ValueError(f"Invalid repository name: {name!r}")
+
+
+def _verify_token_destination_allowed(
+    target_api_url: str,
+    explicit_token: str | None = None,
+    sending_env_webhook_secret: bool = False,
+) -> None:
     """Refuse to send environment-sourced secrets to an untrusted runtime DB URL override."""
-    if explicit_token is not None:
-        return
     try:
         _, token_source = resolve_setting_with_source("HELIOS_GIT_TOKEN")
         _, url_source = resolve_setting_with_source("HELIOS_GIT_API_URL")
+        _, prov_source = resolve_setting_with_source("HELIOS_GIT_PROVIDER")
     except KeyError:
         return
 
-    if token_source == "env" and url_source == "db":
-        env_url = (os.getenv("HELIOS_GIT_API_URL") or "").strip().rstrip("/")
-        if not env_url:
+    has_env_token = explicit_token is None and token_source == "env"
+    has_env_secret = sending_env_webhook_secret and bool(get_webhook_secret())
+
+    if (has_env_token or has_env_secret) and (url_source == "db" or prov_source == "db"):
+        env_prov = (os.getenv("HELIOS_GIT_PROVIDER") or "").strip().lower()
+        env_raw_url = (os.getenv("HELIOS_GIT_API_URL") or "").strip()
+        try:
+            expected_env_url = normalize_api_url(env_prov, env_raw_url)
+        except ValueError as exc:
             raise ValueError(
-                f"Security violation: HELIOS_GIT_TOKEN is configured in environment, but HELIOS_GIT_API_URL is only set in runtime DB ('{target_api_url}'). Refusing to send environment token."
-            )
-        p_env = urllib.parse.urlsplit(env_url)
+                f"Security violation: environment secret configured without matching environment Git API destination ('{target_api_url}')."
+            ) from exc
+        p_env = urllib.parse.urlsplit(expected_env_url)
         p_target = urllib.parse.urlsplit(target_api_url)
         if (p_env.scheme.lower(), p_env.netloc.lower()) != (p_target.scheme.lower(), p_target.netloc.lower()):
             raise ValueError(
-                f"Security violation: HELIOS_GIT_TOKEN is configured in environment for '{p_env.netloc}', refusing to send it to runtime DB override '{p_target.netloc}'."
+                f"Security violation: HELIOS_GIT_TOKEN is configured in environment for '{p_env.netloc}' but destination is runtime DB override '{p_target.netloc}'."
             )
 
 
@@ -244,6 +288,7 @@ def get_repo_hooks(
         encoded = urllib.parse.quote(full_name, safe="")
         endpoint = f"{api_url}/projects/{encoded}/hooks"
     else:
+        _validate_repo_ident(owner, repo_name)
         enc_owner = urllib.parse.quote(owner, safe="")
         enc_name = urllib.parse.quote(repo_name, safe="")
         endpoint = f"{api_url}/repos/{enc_owner}/{enc_name}/hooks"
@@ -280,6 +325,7 @@ def list_repo_webhooks(
     """
     prov = (provider or get_git_provider()).strip().lower()
     base_url = normalize_api_url(prov, api_url or get_git_api_url())
+    _assert_safe_outbound_url(base_url)
     auth_token = token or get_git_token()
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
@@ -330,17 +376,21 @@ def enable_repo_webhooks(
 
     prov = (provider or get_git_provider()).strip().lower()
     base_url = normalize_api_url(prov, api_url or get_git_api_url())
+    _assert_safe_outbound_url(base_url)
     auth_token = token or get_git_token()
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
-
-    _verify_token_destination_allowed(base_url, explicit_token=token)
 
     target_url = (webhook_url or get_webhook_url()).strip()
     if not target_url:
         raise ValueError("HELIOS_WEBHOOK_URL is required to enable webhooks.")
 
     secret = (webhook_secret or get_webhook_secret() or "").strip()
+    _verify_token_destination_allowed(
+        base_url,
+        explicit_token=token,
+        sending_env_webhook_secret=(webhook_secret is None and bool(secret)),
+    )
     headers = get_headers(prov, auth_token)
 
     enabled: list[str] = []
@@ -359,6 +409,7 @@ def enable_repo_webhooks(
                 owner, name = default_owner, clean_repo
 
             try:
+                _validate_repo_ident(owner, name)
                 hooks = get_repo_hooks(client, prov, base_url, owner, name, clean_repo)
                 existing = find_helios_hook(hooks, target_url)
                 if existing:
@@ -435,6 +486,7 @@ def disable_repo_webhooks(
 
     prov = (provider or get_git_provider()).strip().lower()
     base_url = normalize_api_url(prov, api_url or get_git_api_url())
+    _assert_safe_outbound_url(base_url)
     auth_token = token or get_git_token()
     if not auth_token:
         raise ValueError("Git API token is missing or not configured.")
@@ -463,6 +515,7 @@ def disable_repo_webhooks(
                 owner, name = default_owner, clean_repo
 
             try:
+                _validate_repo_ident(owner, name)
                 hooks = get_repo_hooks(client, prov, base_url, owner, name, clean_repo)
                 existing = find_helios_hook(hooks, target_url)
                 if not existing:

@@ -211,12 +211,17 @@ def manage_server_config(
             return f"Validation error for '{k}': {exc}"
 
         set_runtime_setting(k, str(valid_val) if valid_val is not None else "")
+        extra_note = ""
+        if k in ("HELIOS_GIT_API_URL", "HELIOS_GIT_PROVIDER"):
+            if delete_runtime_setting("HELIOS_GIT_TOKEN"):
+                extra_note = " Stored runtime HELIOS_GIT_TOKEN was invalidated for safety; please re-set if needed."
+
         display_val = (
             "•••••••• (configured)"
             if MUTABLE_SETTINGS[k].get("sensitive") and valid_val
             else valid_val
         )
-        return f"Setting '{k}' updated live in SQLite to '{display_val}'. Effective immediately without restarting."
+        return f"Setting '{k}' updated live in SQLite to '{display_val}'. Effective immediately without restarting.{extra_note}"
 
     elif act == "reset":
         if not key.strip():

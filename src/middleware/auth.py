@@ -1,21 +1,29 @@
 """Zero-Trust ASGI security middleware and request body protection."""
 
+import hashlib
 import hmac
-import uuid
 from typing import Any
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from src.config import get_api_key
-from src.tools import sse_app
 
 MAX_WEBHOOK_BYTES = 1_048_576
 
 
+def _constant_time_equals(candidate: str | None, secret: str | None) -> bool:
+    if candidate is None or secret is None:
+        return candidate is secret
+    c_digest = hashlib.sha256(candidate.encode("utf-8")).digest()
+    s_digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    return hmac.compare_digest(c_digest, s_digest)
+
+
 def is_request_authenticated(request: Request) -> bool:
     """
-    Validate request credentials against HELIOS_API_KEY using constant-time hmac.compare_digest.
+    Validate request credentials against HELIOS_API_KEY using constant-time digest comparison.
     Returns True if HELIOS_API_KEY is unset (open local/mesh mode) or if credentials match:
       1. Header: `Authorization: Bearer <key>`
       2. Query Parameter: `?token=<key>`
@@ -25,40 +33,23 @@ def is_request_authenticated(request: Request) -> bool:
         return True
 
     auth_header = request.headers.get("Authorization", "").strip()
-    if auth_header.lower().startswith("bearer "):
-        candidate_bearer = auth_header[7:].strip()
-        if candidate_bearer and hmac.compare_digest(
-            candidate_bearer.encode("utf-8"), api_key.encode("utf-8")
-        ):
-            return True
+    if auth_header:
+        if auth_header.lower().startswith("bearer "):
+            candidate_bearer = auth_header[7:].strip()
+            return bool(candidate_bearer) and _constant_time_equals(candidate_bearer, api_key)
+        return False
 
     query_token = request.query_params.get("token", "").strip()
-    if query_token and hmac.compare_digest(
-        query_token.encode("utf-8"), api_key.encode("utf-8")
-    ):
-        return True
-
-    # Validate active authenticated SSE session on POST to /messages
-    if request.method == "POST" and request.url.path.rstrip("/").endswith("/messages"):
-        raw_sid = request.query_params.get("session_id", "").strip()
-        if raw_sid:
-            try:
-                sid = uuid.UUID(hex=raw_sid)
-                for route in getattr(sse_app, "routes", []):
-                    transport = getattr(getattr(route, "app", None), "__self__", None)
-                    writers = getattr(transport, "_read_stream_writers", None)
-                    if isinstance(writers, dict) and sid in writers:
-                        return True
-            except Exception:
-                pass
+    if query_token:
+        return _constant_time_equals(query_token, api_key)
 
     return False
 
 
 async def _read_bounded_body(
-    request: Request, max_bytes: int = MAX_WEBHOOK_BYTES
+    request: Request, max_bytes: int = MAX_WEBHOOK_BYTES, timeout_seconds: float = 15.0
 ) -> bytes | None:
-    """Read incoming request body with strict size limit enforcement."""
+    """Read incoming request body with strict size limit enforcement and slow-drip timeout."""
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -69,11 +60,15 @@ async def _read_bounded_body(
 
     chunks: list[bytes] = []
     total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > max_bytes:
-            return None
-        chunks.append(chunk)
+    try:
+        with anyio.fail_after(timeout_seconds):
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > max_bytes:
+                    return None
+                chunks.append(chunk)
+    except TimeoutError:
+        return None
     return b"".join(chunks)
 
 
@@ -82,7 +77,7 @@ class AuthGateMiddleware:
     Zero-Trust Security Middleware (Pure ASGI):
     - If HELIOS_API_KEY is unset, passes all requests (open local/mesh mode).
     - If set, enforces constant-time authentication via Authorization: Bearer <key> or ?token=<key>.
-    - Exempts POST /webhook/* (and /hooks/git-commit), GET /health, and GET /setup*.
+    - Exempts specific webhook routes, GET /health, and GET /setup*.
     - Pure ASGI implementation ensures compatibility with SSE and streaming HTTP responses
       without Starlette BaseHTTPMiddleware response-wrapping assertion crashes.
     """
@@ -113,8 +108,24 @@ class AuthGateMiddleware:
         ):
             return await self.app(scope, receive, send)
 
-        if request.method == "POST" and (
-            path.startswith("/webhook/") or path == "/hooks/git-commit"
+        # Enforce payload limit on POST requests
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_WEBHOOK_BYTES:
+                        response = JSONResponse(
+                            {"status": "error", "message": "Payload exceeds 1MB limit."},
+                            status_code=413,
+                        )
+                        return await response(scope, receive, send)
+                except ValueError:
+                    pass
+
+        if request.method == "POST" and path in (
+            "/webhook/git",
+            "/webhook/forgejo",
+            "/hooks/git-commit",
         ):
             return await self.app(scope, receive, send)
 

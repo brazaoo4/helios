@@ -64,7 +64,7 @@ def db_audit_memories(
         # Active & stale memories
         active_rows = conn.execute(
             f"""
-            SELECT id, scope, category, subject, content, status, stale_reason,
+            SELECT id, scope, category, subject, content, status, stale_reason, stale_since,
                    anchor_files, valid_from, last_accessed, hit_count
             FROM memories
             WHERE status IN ('active', 'stale') AND valid_to IS NULL {scope_clause}
@@ -111,7 +111,7 @@ def db_audit_memories(
                 "valid_from": r["valid_from"],
             }
             for r in active_rows
-            if r["status"] == "stale" and r["valid_from"] < stale_cutoff
+            if r["status"] == "stale" and (r["stale_since"] or r["valid_from"]) < stale_cutoff
         ]
 
         # Cold memories (0 hits, active only, unaccessed > 30 days)
@@ -238,7 +238,7 @@ def db_prune_memories(
                 UPDATE memories
                 SET status = 'archived', valid_to = ?
                 WHERE status = 'stale'
-                  AND valid_from < ?
+                  AND COALESCE(stale_since, valid_from) < ?
                   AND valid_to IS NULL
                   {scope_clause}
                 RETURNING id
