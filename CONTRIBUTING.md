@@ -47,7 +47,7 @@ src/
 ├── routes/                # Starlette HTTP REST routes (health, setup, exports, git_webhooks)
 ├── tools/                 # FastMCP tools (base, memory, config, admin)
 ├── config.py              # Layered settings engine (SQLite > Env > Defaults)
-├── db.py                  # SQLite WAL operations, FTS5 BM25 queries, schema migrations
+├── db/                    # Modular SQLite database engine (connection, schema, scopes, memories, search, drift, audit)
 ├── exporter.py            # Markdown mirror synchronization & backup archive generation
 ├── onboarding/            # Script generation, multi-client setup runbooks, and uninstallation
 ├── webhooks.py            # Git provider integrations (GitHub, Forgejo/Gitea, GitLab)

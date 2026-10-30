@@ -207,8 +207,8 @@ def db_prune_memories(
             target_scope = resolve_scope(raw_scope, conn=conn)
 
         scope_clause = "AND scope = ?" if target_scope else ""
-        params_episodic: list[Any] = [episodic_cutoff]
-        params_stale: list[Any] = [stale_cutoff]
+        params_episodic: list[Any] = [ts, episodic_cutoff]
+        params_stale: list[Any] = [ts, stale_cutoff]
         if target_scope:
             params_episodic.append(target_scope)
             params_stale.append(target_scope)
@@ -219,7 +219,7 @@ def db_prune_memories(
         cur_episodic = conn.execute(
             f"""
             UPDATE memories
-            SET status = 'archived', valid_to = '{ts}'
+            SET status = 'archived', valid_to = ?
             WHERE category = 'episodic'
               AND last_accessed < ?
               AND status IN ('active', 'stale')
@@ -236,7 +236,7 @@ def db_prune_memories(
             cur_stale = conn.execute(
                 f"""
                 UPDATE memories
-                SET status = 'archived', valid_to = '{ts}'
+                SET status = 'archived', valid_to = ?
                 WHERE status = 'stale'
                   AND valid_from < ?
                   AND valid_to IS NULL

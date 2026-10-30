@@ -67,14 +67,14 @@ INITIAL_FACTS = [
         "category": "rule",
         "subject": "atomic-word-limit",
         "content": "AUDN Write Gate strictly enforces a <= 25-word limit per atomic memory fact.",
-        "anchor_files": ["src/db.py"],
+        "anchor_files": ["src/db/memories.py"],
     },
     {
         "scope": "helios",
         "category": "fact",
         "subject": "storage-engine",
         "content": "Helios uses SQLite with WAL mode, busy_timeout=10000, and FTS5 BM25 search for sub-millisecond retrieval.",
-        "anchor_files": ["src/db.py"],
+        "anchor_files": ["src/db/connection.py", "src/db/schema.py", "src/db/search.py"],
     },
     {
         "scope": "helios",
