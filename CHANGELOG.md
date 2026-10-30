@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.0](https://github.com/brazaoo4/helios/compare/v1.7.4...v1.8.0) (2026-10-30)
+
+
+### Features
+
+* **search:** add FTS5 synonym expansion, weighted BM25, and distill_memories tool ([cdd0e73](https://github.com/brazaoo4/helios/commit/cdd0e73fd42ef5f76da9f4fd3782dfe95f5e2486))
+* **search:** add FTS5 synonym expansion, weighted BM25, and distill_memories tool ([f234504](https://github.com/brazaoo4/helios/commit/f234504cccc4b3644cef2a6252f1989576593016))
+
 ## [1.7.4](https://github.com/brazaoo4/helios/compare/v1.7.3...v1.7.4) (2026-10-30)
 
 
