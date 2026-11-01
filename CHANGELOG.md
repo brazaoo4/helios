@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.4](https://github.com/brazaoo4/helios/compare/v1.8.3...v1.8.4) (2026-11-01)
+
+
+### Bug Fixes
+
+* **packaging:** correct AGPL classifier for hatchling and add helios CLI entrypoint ([b365ac4](https://github.com/brazaoo4/helios/commit/b365ac430358fca143ace7307c17948ce4a8435b))
+* **packaging:** correct AGPL classifier for hatchling and add helios CLI entrypoint ([e3ae6a2](https://github.com/brazaoo4/helios/commit/e3ae6a2ed746c3e5a13a61c3b8b73a4aced329dc))
+
 ## [1.8.3](https://github.com/brazaoo4/helios/compare/v1.8.2...v1.8.3) (2026-10-30)
 
 
