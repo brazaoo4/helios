@@ -137,7 +137,7 @@ def test_all_mcp_tools_declare_four_boolean_annotations():
             "openWorldHint": False,
         },
         "export_bundle": {
-            "readOnlyHint": True,
+            "readOnlyHint": False,
             "destructiveHint": False,
             "idempotentHint": True,
             "openWorldHint": False,
@@ -194,3 +194,16 @@ def test_all_mcp_tools_declare_four_boolean_annotations():
         assert tool.annotations.destructiveHint is expected["destructiveHint"]
         assert tool.annotations.idempotentHint is expected["idempotentHint"]
         assert tool.annotations.openWorldHint is expected["openWorldHint"]
+
+
+def test_all_mcp_tools_have_rich_tdqs_descriptions():
+    """Verify that all 11 MCP tools have rich, multi-sentence TDQS descriptions with usage routing."""
+    tools = mcp._tool_manager.list_tools()
+    assert len(tools) == 11
+
+    for tool in tools:
+        desc = (tool.description or "").strip()
+        assert len(desc) > 80, f"Tool {tool.name} description is too short for TDQS: {desc}"
+        assert "Use " in desc, f"Tool {tool.name} description lacks explicit sibling usage routing: {desc}"
+        assert "AUDN Write Gate" not in desc, f"Tool {tool.name} contains internal jargon"
+
