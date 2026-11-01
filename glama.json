@@ -1,0 +1,14 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "brazaoo4"
+  ],
+  "name": "helios",
+  "description": "A token-budgeted, drift-aware MCP memory engine for AI coding agents.",
+  "categories": [
+    "developer-tools",
+    "memory",
+    "database"
+  ],
+  "github": "https://github.com/brazaoo4/helios"
+}
