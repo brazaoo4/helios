@@ -22,7 +22,7 @@ def _get_webhook_func(name: str) -> Any:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        readOnlyHint=True,
+        readOnlyHint=False,
         destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
@@ -30,8 +30,9 @@ def _get_webhook_func(name: str) -> Any:
 )
 def export_bundle() -> str:
     """
-    Generate a complete, portable archive snapshot (helios_portable_bundle.tar.gz)
-    using the SQLite Online Backup API, bundling the DB and all Markdown exports.
+    Create or overwrite a portable backup archive (helios_portable_bundle.tar.gz) on the server filesystem.
+    Uses the SQLite Online Backup API to capture a crash-safe snapshot of memory.db alongside all Markdown exports without locking concurrent readers or writers, leaving database records untouched.
+    Use export_bundle for server backups and migration snapshots; use get_client_setup_bundle instead to generate IDE/CLI configuration snippets, or recall_memories to query stored facts.
     """
     try:
         archive_path = create_portable_archive()
@@ -72,7 +73,10 @@ def manage_git_webhooks(
     ] = False,
 ) -> str:
     """
-    Manage Git repository push drift detection webhooks across Forgejo, Gitea, GitHub, or GitLab.
+    List, enable, or disable remote Git push webhooks for anchor_files drift detection across Forgejo, Gitea, GitHub, or GitLab.
+    Requires HELIOS_GIT_TOKEN and HELIOS_WEBHOOK_URL (returns manual setup instructions if unconfigured): action='list' audits owned repos, action='enable' installs an HMAC-signed push webhook on each target in repos, and action='disable' deletes only the Helios webhook from the remote repositories without affecting code or stored memories.
+    Always run action='list' and confirm target repos with the user before calling 'enable' or 'disable'.
+    Use manage_git_webhooks to manage remote repository hooks; use manage_server_config to set HELIOS_GIT_* settings, or revalidate_memories to clear [STALE] flags after a push.
     """
     token = get_git_token()
     webhook_url = get_webhook_url()
@@ -219,7 +223,9 @@ def get_client_setup_bundle(
     ] = "install_or_update",
 ) -> str:
     """
-    Retrieve client configuration snippets, global directives (GEMINI.md, AGENTS.md, CLAUDE.md, etc.), and the /remember skill definition.
+    Generate read-only client onboarding configs, idempotent global agent directives (<!-- HELIOS:START -->), and /remember skill files for local AI tools.
+    Supports full client lifecycle management via action: 'install_or_update' outputs non-destructive MCP and directive snippets tailored to client, os_platform, and instance_role ('workstation' vs headless 'server-cli'); 'switch_role' updates role-specific rules; 'uninstall' provides surgical removal instructions that preserve user custom rules.
+    Use get_client_setup_bundle to install, reconfigure, or uninstall Helios on a client machine; use manage_server_config to modify server-side settings, or export_bundle to back up the database.
     """
     base_url = resolve_server_base_url()
     return generate_client_bundle(

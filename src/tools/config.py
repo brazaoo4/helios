@@ -59,11 +59,10 @@ def manage_scope_alias(
     ] = "set",
 ) -> str:
     """
-    Manage project and folder aliases mapping to canonical memory scopes.
-    - action='set': Maps alias -> canonical_scope (e.g. 'frontend-v2' -> 'web').
-    - action='remove': Deletes an existing alias mapping.
-    - action='list': Returns all current alias-to-scope mappings.
-    - action='rename': Migrates all memories from alias to canonical_scope and registers alias.
+    Manage project alias mappings and migrate memory scopes in SQLite.
+    action='list' is read-only and returns all aliases plus per-scope active/stale counts; action='set' maps alias to canonical_scope; action='remove' deletes only the alias mapping while leaving stored memories untouched; action='rename' destructively migrates all memories from alias into canonical_scope, registers the alias, and syncs Markdown exports.
+    'set' and 'rename' require both alias and canonical_scope, while 'remove' requires alias.
+    Use manage_scope_alias to unify repository names or rename projects; use manage_server_config for server tunables or distill_memories to clean up memories within a scope.
     """
     try:
         act = (action or "").strip().lower()
@@ -151,7 +150,10 @@ def manage_server_config(
     ] = "",
 ) -> str:
     """
-    Manage live Day-2 Helios server configuration settings in SQLite without restarting the container.
+    Inspect, override, or reset live Helios runtime settings in SQLite without restarting the server.
+    action='list' returns all settings with secrets redacted; action='set' (requires key and value) persists an immediate runtime override; action='reset' (requires key) removes the SQLite override to revert to environment or default values.
+    Security-locked keys (HELIOS_API_KEY, HELIOS_WEBHOOK_SECRET, MEMORY_DATA_DIR) cannot be altered at runtime, and changing HELIOS_GIT_API_URL or HELIOS_GIT_PROVIDER automatically clears any stored runtime HELIOS_GIT_TOKEN.
+    Use manage_server_config for server-side tunables; use get_client_setup_bundle for local IDE/CLI onboarding or manage_scope_alias for project scope mappings.
     """
     act = (action or "list").strip().lower()
 

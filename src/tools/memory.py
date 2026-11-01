@@ -96,7 +96,10 @@ def recall_memories(
     ] = "",
 ) -> str:
     """
-    Recall active memories from Helios using FTS5 BM25 search.
+    Search active and stale memories in Helios using SQLite FTS5 BM25 ranking and category priority (rule > fact > preference > episodic).
+    Read-only: resolves scope aliases, merges 'global' rules when include_global=True, returns top priority records when query is empty, and emits a warning if directive_version lags the server.
+    If any returned memory is flagged [STALE], inspect its anchor_files before acting and resolve via revalidate_memories or save_memory.
+    Use recall_memories at task start for current state; use recall_history instead to inspect superseded or archived records.
     """
     try:
         cat_filter = None if (category is None or category == "") else category
@@ -188,7 +191,10 @@ def save_memory(
     ] = None,
 ) -> str:
     """
-    Save or update a memory in Helios (AUDN Write Gate).
+    Create or supersede an atomic memory (<= 25 words) in SQLite and synchronize Markdown scope exports.
+    Saving to an existing (scope, subject) slot or passing replaces_id automatically marks the prior active memory as 'superseded', while identical content is a safe idempotent no-op.
+    Providing repo-relative anchor_files links the memory to Git push webhooks so commits touching those files automatically flag it [STALE].
+    Use save_memory to add or update facts and rules; use deprecate_memory to archive obsolete facts without replacement, revalidate_memories to clear [STALE] flags when facts remain valid, or distill_memories for bulk cleanup.
     """
     try:
         res = upsert_memory(
@@ -237,7 +243,10 @@ def deprecate_memory(
     ] = "",
 ) -> str:
     """
-    Deprecate (archive) an active or stale memory that is obsolete.
+    Archive an obsolete active or stale memory by ID without deleting its historical audit record.
+    Transitions status to 'archived', sets the valid_to timestamp, logs the deprecation reason in the scope changelog, and updates Markdown exports.
+    Archived records are excluded from recall_memories but remain permanently inspectable via recall_history.
+    Use deprecate_memory when a fact or rule no longer applies and has no replacement; use save_memory instead to overwrite an outdated fact with a new value, or revalidate_memories if a [STALE] memory is still accurate.
     """
     try:
         res = db_deprecate_memory(memory_id, reason)
@@ -274,8 +283,9 @@ def recall_history(
     ] = 10,
 ) -> str:
     """
-    Inspect previously superseded or archived memories for time-travel debugging
-    and understanding configuration drift over time.
+    Retrieve superseded and archived memory records for a scope to audit configuration history and slot lineage.
+    Read-only: resolves scope aliases and returns up to limit (1-25) historical entries ordered by valid_to descending, including validity timestamps and superseding memory IDs.
+    Use recall_history for time-travel debugging or reviewing retired facts; use recall_memories instead to search current active or [STALE] memories.
     """
     resolved = resolve_scope(scope)
     clamped_limit = max(1, min(limit, 25))
@@ -328,7 +338,9 @@ def revalidate_memories(
     ],
 ) -> str:
     """
-    Batch revalidate stale memories back to 'active' status after auditing anchor files.
+    Restore a batch of [STALE] memories back to 'active' status after verifying that changes to their anchor_files did not invalidate them.
+    Clears stale_reason and stale_since for all valid stale IDs in memory_ids and syncs Markdown exports; non-existent or already-active IDs are safely skipped and reported without failing the batch.
+    Use revalidate_memories only when the recorded fact remains accurate after a commit; use save_memory instead to supersede the fact if its value changed, or deprecate_memory if it was removed.
     """
     try:
         res = db_revalidate_memories(memory_ids)
@@ -389,7 +401,9 @@ def distill_memories(
     ] = 30,
 ) -> str:
     """
-    Audit memory hygiene, identify overlapping slot collisions, and prune expired or long-stale memories.
+    Audit scope memory health, suggest duplicate slot consolidations, or prune expired episodic and abandoned stale records.
+    action='audit' (default) and action='suggest' are read-only diagnostics; action='prune' archives expired episodic notes and stale memories older than stale_age_days, but is gated by dry_run=True by default (set dry_run=False to commit changes and sync Markdown exports).
+    Use distill_memories for periodic scope-wide hygiene; use deprecate_memory to retire a single obsolete memory ID, or save_memory with replaces_id to apply consolidation suggestions.
     """
     try:
         act = (action or "audit").strip().lower()
