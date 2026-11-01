@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.5](https://github.com/brazaoo4/helios/compare/v1.8.4...v1.8.5) (2026-11-01)
+
+
+### Documentation
+
+* **mcp:** upgrade tool descriptions and annotations for Glama TDQS optimization ([3a505fb](https://github.com/brazaoo4/helios/commit/3a505fb234ac6d964562a19e5e32f5af21feaefb))
+* **mcp:** upgrade tool descriptions and annotations for Glama TDQS optimization ([b8ccd86](https://github.com/brazaoo4/helios/commit/b8ccd86e7b29b03ac1ed7b7328c6e774c0a26ee9))
+
 ## [1.8.4](https://github.com/brazaoo4/helios/compare/v1.8.3...v1.8.4) (2026-11-01)
 
 
