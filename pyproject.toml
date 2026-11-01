@@ -16,7 +16,7 @@ keywords = ["mcp", "ai", "agents", "memory", "sqlite", "fts5", "bm25", "llm"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 only (AGPL-3.0-only)",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -42,6 +42,9 @@ Homepage = "https://github.com/brazaoo4/helios"
 Repository = "https://github.com/brazaoo4/helios"
 Issues = "https://github.com/brazaoo4/helios/issues"
 Changelog = "https://github.com/brazaoo4/helios/blob/main/CHANGELOG.md"
+
+[project.scripts]
+helios = "src.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
