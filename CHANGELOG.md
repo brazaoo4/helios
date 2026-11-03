@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/brazaoo4/helios/compare/v1.8.5...v1.8.6) (2026-11-01)
+
+
+### Documentation
+
+* add Glama score badge to README and remove smithery manifest ([9243c51](https://github.com/brazaoo4/helios/commit/9243c51d1da0cc764599fdbf6f87d861acd12232))
+* add Glama score badge to README and remove smithery manifest ([f44ed17](https://github.com/brazaoo4/helios/commit/f44ed170a206cce1b1b7d35e838a95e8df176c83))
+
 ## [1.8.5](https://github.com/brazaoo4/helios/compare/v1.8.4...v1.8.5) (2026-11-01)
 
 
