@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.7](https://github.com/brazaoo4/helios/compare/v1.8.6...v1.8.7) (2026-11-13)
+
+
+### Bug Fixes
+
+* **docker:** include pyproject.toml so runtime __version__ matches re… ([daded6e](https://github.com/brazaoo4/helios/commit/daded6ed13c361b175ed7040099be274809a8570))
+* **docker:** include pyproject.toml so runtime __version__ matches release ([9c4fbce](https://github.com/brazaoo4/helios/commit/9c4fbce2d3f79b4ebcdfdbb1dc4cf60d2c17ad3d))
+
 ## [1.8.6](https://github.com/brazaoo4/helios/compare/v1.8.5...v1.8.6) (2026-11-01)
 
 
