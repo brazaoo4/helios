@@ -37,7 +37,6 @@ docs/
 TASKS.md
 
 # Packaging & Release Please files
-pyproject.toml
 requirements-dev.txt
 release-please*
 .release-please*

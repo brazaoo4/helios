@@ -35,7 +35,8 @@ ENV MEMORY_DATA_DIR=/data
 RUN mkdir -p /data/exports /data/exports/changelog && \
     chown -R helios:helios /data /app
 
-# Copy application code
+# Copy application code and package metadata (for runtime __version__ resolution)
+COPY --chown=helios:helios pyproject.toml ./pyproject.toml
 COPY --chown=helios:helios src/ ./src/
 
 USER helios

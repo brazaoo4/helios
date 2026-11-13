@@ -1,6 +1,6 @@
 """Helios: Token-budgeted, drift-aware MCP memory engine."""
 
-import re
+import tomllib
 from pathlib import Path
 
 
@@ -8,10 +8,10 @@ def _resolve_version() -> str:
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.is_file():
         try:
-            text = pyproject.read_text(encoding="utf-8")
-            match = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
-            if match:
-                return match.group(1)
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            pkg_version = data.get("project", {}).get("version")
+            if isinstance(pkg_version, str) and pkg_version.strip():
+                return pkg_version.strip()
         except Exception:  # pragma: no cover
             pass
     try:  # pragma: no cover
