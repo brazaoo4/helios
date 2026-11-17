@@ -6,7 +6,10 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
+from src.config import get_api_key
 from src.exporter import create_portable_archive, get_export_dir
+from src.middleware.auth import is_request_authenticated
+from src.security_gate import redact_secrets
 
 
 async def export_bundle_download(request: Request) -> Response:
@@ -22,8 +25,13 @@ async def export_bundle_download(request: Request) -> Response:
             media_type="application/gzip",
         )
     except Exception as exc:
+        if get_api_key() is not None and is_request_authenticated(request):
+            return JSONResponse(
+                {"status": "error", "message": f"Failed to generate bundle: {redact_secrets(str(exc))}"},
+                status_code=500,
+            )
         return JSONResponse(
-            {"status": "error", "message": f"Failed to generate bundle: {exc}"},
+            {"status": "error", "message": "Failed to generate bundle."},
             status_code=500,
         )
 

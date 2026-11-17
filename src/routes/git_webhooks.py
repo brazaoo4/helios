@@ -168,10 +168,10 @@ async def git_webhook(request: Request) -> JSONResponse:
     webhook_secret = get_webhook_secret()
     has_api_key = get_api_key() is not None
     req_sec_env = os.getenv("HELIOS_REQUIRE_WEBHOOK_SECRET")
-    if req_sec_env is None:
+    if req_sec_env is None or not req_sec_env.strip():
         require_secret = has_api_key
     else:
-        require_secret = req_sec_env.lower() in ("1", "true", "yes")
+        require_secret = req_sec_env.strip().lower() in ("1", "true", "yes")
 
     if require_secret and not webhook_secret:
         return JSONResponse(
@@ -279,10 +279,11 @@ async def git_webhook(request: Request) -> JSONResponse:
         else:
             commit_sha = "latest"
 
+    bounded_files = sorted(changed_files)[:500]
     flagged_count = await anyio.to_thread.run_sync(
         _process_webhook_drift,
         repo_name,
-        list(changed_files),
+        bounded_files,
         commit_sha,
     )
 
@@ -292,7 +293,7 @@ async def git_webhook(request: Request) -> JSONResponse:
             "provider": provider,
             "repository": repo_name,
             "commits_evaluated": len(commits),
-            "files_evaluated": len(changed_files),
+            "files_evaluated": len(bounded_files),
             "memories_flagged_stale": flagged_count,
         },
         status_code=200,

@@ -4,8 +4,10 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from src.config import get_api_key
 from src.db import get_connection
 from src.middleware.auth import is_request_authenticated
+from src.security_gate import redact_secrets
 
 
 def _query_health_status() -> tuple[str, int]:
@@ -46,7 +48,7 @@ async def health_check(request: Request) -> JSONResponse:
             status_code=200,
         )
     except Exception as exc:
-        if not is_auth:
+        if not is_auth or get_api_key() is None:
             return JSONResponse(
                 {
                     "status": "unhealthy",
@@ -58,7 +60,7 @@ async def health_check(request: Request) -> JSONResponse:
             {
                 "status": "unhealthy",
                 "service": "helios",
-                "error": str(exc),
+                "error": redact_secrets(str(exc)),
             },
             status_code=503,
         )

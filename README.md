@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
     user: "1000:1000"  # Must match ownership of your host data directory
     ports:
-      - "8000:8000"    # Omit if routing internally via a reverse proxy network
+      - "127.0.0.1:8000:8000"    # Omit if routing internally via a reverse proxy network
     volumes:
       # [MANDATORY] Persistent storage for SQLite WAL (memory.db) & Markdown exports
       - ./data:/data
@@ -77,19 +77,22 @@ services:
       # 2. RECOMMENDED SECURITY (Required if exposed outside a private LAN/VPN)
       # ========================================================================
       # Shared Bearer / ?token= key required for /mcp, /sse, and /export/*.
-      # Leave empty ONLY if running on a trusted local network or Tailscale mesh.
+      # Set a strong random token (e.g., `openssl rand -hex 32`) on shared networks.
       - HELIOS_API_KEY=
       # Shared HMAC-SHA256 secret for verifying POST /webhook/git payloads.
-      # Generate with: openssl rand -hex 32
+      # Automatically required when HELIOS_API_KEY is set unless explicitly overridden.
       - HELIOS_WEBHOOK_SECRET=
-      - HELIOS_REQUIRE_WEBHOOK_SECRET=false
+      - HELIOS_REQUIRE_WEBHOOK_SECRET=
+      # Trusted reverse proxy IPs allowed to supply X-Forwarded-* headers
+      - FORWARDED_ALLOW_IPS=127.0.0.1
 
       # ========================================================================
       # 3. OPTIONAL: REVERSE PROXY & ENGINE TUNABLES (Also live-editable via MCP)
       # ========================================================================
       # Override base URL used in /setup scripts (auto-detected from proxy headers if empty)
       - HELIOS_PUBLIC_URL=
-      - HELIOS_ALLOWED_ORIGINS=*
+      # Comma-separated browser origins allowed on /mcp, /sse, /messages, /export/* (empty denies cross-origin browser calls)
+      - HELIOS_ALLOWED_ORIGINS=
       - HELIOS_WORD_LIMIT=25
       - HELIOS_EPISODIC_TTL_DAYS=14
       - HELIOS_CHANGELOG_LIMIT=100
@@ -521,9 +524,9 @@ distill_memories(
 | Method & Path | Auth Required | Description |
 | :--- | :--- | :--- |
 | `GET /health` | No (Redacted) / Yes (Full) | Returns service health. Redacts database telemetry when `HELIOS_API_KEY` is active unless authenticated. |
-| `GET /setup` | No | AI onboarding guide with non-destructive MCP config snippets. Accepts optional `?token=<key>`. |
-| `GET /setup.sh` | No | 1-liner Linux/macOS Bash client installer (`curl -fsSL <url>/setup.sh \| bash`). |
-| `GET /setup.ps1` | No | 1-liner Windows PowerShell client installer (`irm <url>/setup.ps1 \| iex`). |
+| `GET /setup` | No (Verifies `?token=`) | AI onboarding guide with non-destructive MCP config snippets. Rejects mismatched `?token=<key>` with `401`. |
+| `GET /setup.sh` | No (Verifies `?token=`) | 1-liner Linux/macOS Bash client installer (`curl -fsSL <url>/setup.sh \| bash`). |
+| `GET /setup.ps1` | No (Verifies `?token=`) | 1-liner Windows PowerShell client installer (`irm <url>/setup.ps1 \| iex`). |
 | `GET /uninstall` | No | AI uninstallation guide (`get_client_setup_bundle(action='uninstall')`). Accepts optional `?client=<name>`. |
 | `GET /uninstall.sh` | No | 1-liner Linux/macOS Bash uninstaller (`curl -fsSL <url>/uninstall.sh \| bash`). Accepts optional `?client=<name>`. |
 | `GET /uninstall.ps1` | No | 1-liner Windows PowerShell uninstaller (`irm <url>/uninstall.ps1 \| iex`). Accepts optional `?client=<name>`. |

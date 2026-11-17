@@ -52,13 +52,11 @@ def test_health_endpoint_database_error(monkeypatch):
 
     monkeypatch.setattr(health_mod, "_query_health_status", _broken_query)
 
-    # 1. Open mode (unauthenticated, open mesh) -> 503 with error
+    # 1. Open mode (unauthenticated, open mesh) -> 503 redacted (no raw exception leak)
     with TestClient(app) as client:
         res_open = client.get("/health")
         assert res_open.status_code == 503
-        data_open = res_open.json()
-        assert data_open["status"] == "unhealthy"
-        assert "Database connection timed out" in data_open["error"]
+        assert res_open.json() == {"status": "unhealthy", "service": "helios"}
 
     # 2. Authenticated mode with error telemetry
     monkeypatch.setenv("HELIOS_API_KEY", "secret-test-token")

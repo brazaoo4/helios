@@ -224,6 +224,10 @@ def resolve_setting_with_source(key: str) -> tuple[Any, str]:
         elif key == "HELIOS_GIT_TOKEN":
             tok_val = env_raw.strip()
             return tok_val if tok_val else None, "env"
+        elif key in ("HELIOS_GIT_API_URL", "HELIOS_WEBHOOK_URL"):
+            return validate_http_url(env_raw.strip(), allow_loopback=False), "env"
+        elif key == "HELIOS_PUBLIC_URL":
+            return validate_http_url(env_raw.strip(), allow_loopback=True), "env"
         else:
             return env_raw.strip(), "env"
 
@@ -255,12 +259,11 @@ def get_webhook_secret() -> str | None:
 
 
 def get_allowed_origins() -> list[str]:
-    """Resolve HELIOS_ALLOWED_ORIGINS dynamically into a list (default: ['*']). Environment-only."""
+    """Resolve HELIOS_ALLOWED_ORIGINS dynamically into a list (default: []). Environment-only."""
     raw = os.getenv("HELIOS_ALLOWED_ORIGINS")
     if raw is None:
-        raw = os.getenv("HELIOS_CORS_ORIGINS", "*")
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
-    return origins if origins else ["*"]
+        raw = os.getenv("HELIOS_CORS_ORIGINS", "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 # --- Layered Getters (SQLite -> Environment -> Default) ---

@@ -34,7 +34,7 @@ def test_config_defaults_and_dynamic_env(monkeypatch, tmp_path):
     assert config.HELIOS_WORD_LIMIT == 25
     assert config.HELIOS_EPISODIC_TTL_DAYS == 14
     assert config.HELIOS_CHANGELOG_LIMIT == 100
-    assert config.HELIOS_ALLOWED_ORIGINS == ["*"]
+    assert config.HELIOS_ALLOWED_ORIGINS == []
     assert config.HELIOS_GIT_PROVIDER == ""
     assert config.HELIOS_GIT_API_URL == ""
     assert config.HELIOS_GIT_TOKEN is None

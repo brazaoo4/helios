@@ -23,6 +23,8 @@ def _normalize_alias_key(raw_alias: str) -> str:
     if folder_name in ("", ".", "..") or any(ord(c) < 32 for c in folder_name):
         return ""
     folder_name = re.sub(r"[^a-z0-9._-]", "-", folder_name).strip(".-")
+    if len(folder_name) > 64:
+        raise ValueError("Scope or alias name cannot exceed 64 characters.")
     return folder_name
 
 

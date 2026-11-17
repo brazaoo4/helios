@@ -34,7 +34,7 @@ def flag_stale_by_files(repo_name: str, modified_files: list[str], commit_sha: s
         return 0
 
     short_sha = re.sub(r"[^a-zA-Z0-9._-]", "", commit_sha or "")[:7] or "latest"
-    norm_modified = [_normalize_repo_path(f) for f in modified_files if _normalize_repo_path(f)]
+    norm_modified = [_normalize_repo_path(f) for f in modified_files[:500] if _normalize_repo_path(f)]
     if not norm_modified:
         return 0
 

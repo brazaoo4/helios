@@ -8,9 +8,21 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from src.config import get_api_key
+from src.config import get_allowed_origins, get_api_key
 
 MAX_WEBHOOK_BYTES = 1_048_576
+
+
+class _PayloadTooLargeError(Exception):
+    """Internal sentinel raised when a streamed request body exceeds MAX_WEBHOOK_BYTES."""
+
+
+def _is_origin_allowed(origin: str) -> bool:
+    """Validate browser Origin header against HELIOS_ALLOWED_ORIGINS."""
+    allowed = get_allowed_origins()
+    if "*" in allowed:
+        return True
+    return origin.lower() in [o.lower() for o in allowed]
 
 
 def _constant_time_equals(candidate: str | None, secret: str | None) -> bool:
@@ -94,6 +106,15 @@ class AuthGateMiddleware:
             return await self.app(scope, receive, send)
 
         path = request.url.path
+        if path in ("/mcp", "/sse", "/messages") or path.startswith("/messages/") or path.startswith("/export/"):
+            origin = request.headers.get("origin", "").strip()
+            if origin and not _is_origin_allowed(origin):
+                response = JSONResponse(
+                    {"status": "error", "message": "Forbidden: untrusted Origin header."},
+                    status_code=403,
+                )
+                return await response(scope, receive, send)
+
         if request.method == "GET" and (
             path == "/health"
             or path
@@ -108,28 +129,38 @@ class AuthGateMiddleware:
         ):
             return await self.app(scope, receive, send)
 
-        # Enforce payload limit on POST requests
-        if request.method in ("POST", "PUT", "PATCH"):
+        is_body_method = request.method in ("POST", "PUT", "PATCH")
+        # Enforce payload limit on body-bearing requests
+        if is_body_method:
             content_length = request.headers.get("content-length")
-            if content_length:
+            if content_length is not None:
                 try:
-                    if int(content_length) > MAX_WEBHOOK_BYTES:
-                        response = JSONResponse(
-                            {"status": "error", "message": "Payload exceeds 1MB limit."},
-                            status_code=413,
-                        )
-                        return await response(scope, receive, send)
+                    parsed_len = int(content_length)
                 except ValueError:
-                    pass
+                    response = JSONResponse(
+                        {"status": "error", "message": "Invalid Content-Length header."},
+                        status_code=400,
+                    )
+                    return await response(scope, receive, send)
+                if parsed_len < 0:
+                    response = JSONResponse(
+                        {"status": "error", "message": "Invalid Content-Length header."},
+                        status_code=400,
+                    )
+                    return await response(scope, receive, send)
+                if parsed_len > MAX_WEBHOOK_BYTES:
+                    response = JSONResponse(
+                        {"status": "error", "message": "Payload exceeds 1MB limit."},
+                        status_code=413,
+                    )
+                    return await response(scope, receive, send)
 
-        if request.method == "POST" and path in (
+        is_webhook_route = request.method == "POST" and path in (
             "/webhook/git",
             "/webhook/forgejo",
             "/hooks/git-commit",
-        ):
-            return await self.app(scope, receive, send)
-
-        if not is_request_authenticated(request):
+        )
+        if not is_webhook_route and not is_request_authenticated(request):
             response = JSONResponse(
                 {
                     "status": "error",
@@ -139,7 +170,50 @@ class AuthGateMiddleware:
             )
             return await response(scope, receive, send)
 
-        return await self.app(scope, receive, send)
+        if not is_body_method:
+            return await self.app(scope, receive, send)
+
+        bytes_received = 0
+        limit_exceeded = False
+        response_started = False
+
+        async def bounded_receive() -> dict[str, Any]:
+            nonlocal bytes_received, limit_exceeded
+            message = await receive()
+            if message.get("type") == "http.request":
+                body = message.get("body", b"")
+                bytes_received += len(body)
+                if bytes_received > MAX_WEBHOOK_BYTES:
+                    limit_exceeded = True
+                    raise _PayloadTooLargeError()
+            return message
+
+        async def guarded_send(message: dict[str, Any]) -> None:
+            nonlocal response_started
+            if limit_exceeded:
+                return
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, bounded_receive, guarded_send)
+        except _PayloadTooLargeError:
+            pass
+        except BaseException as exc:
+            if not limit_exceeded:
+                raise
+            if isinstance(exc, BaseExceptionGroup):
+                _, rest = exc.split(_PayloadTooLargeError)
+                if rest is not None:
+                    raise rest
+
+        if limit_exceeded and not response_started:
+            response = JSONResponse(
+                {"status": "error", "message": "Payload exceeds 1MB limit."},
+                status_code=413,
+            )
+            return await response(scope, receive, send)
 
 
 __all__ = [

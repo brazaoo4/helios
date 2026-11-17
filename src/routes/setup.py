@@ -5,6 +5,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from src.config import get_api_key
+from src.middleware.auth import is_request_authenticated
 from src.onboarding import (
     generate_client_bundle,
     generate_setup_bash,
@@ -21,10 +22,12 @@ async def setup_instructions(request: Request) -> Response:
     HTTP GET /setup endpoint returning self-contained setup instructions
     for AI agents (curl -fsSL https://<host>/setup).
     """
+    query_token = request.query_params.get("token")
+    if query_token is not None and query_token.strip() != "" and not is_request_authenticated(request):
+        return PlainTextResponse("Error: Unauthorized: invalid token parameter.\n", status_code=401)
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
     has_auth = get_api_key() is not None
-    query_token = request.query_params.get("token")
     content = await anyio.to_thread.run_sync(
         generate_setup_markdown,
         base_url,
@@ -40,9 +43,11 @@ async def setup_powershell_script(request: Request) -> Response:
     Usage: irm https://<host>/setup.ps1 | iex
     Supports ?token=..., ?role=server-cli|workstation, ?client=all|cursor|antigravity
     """
+    query_token = request.query_params.get("token")
+    if query_token is not None and query_token.strip() != "" and not is_request_authenticated(request):
+        return PlainTextResponse("Error: Unauthorized: invalid token parameter.\n", status_code=401)
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
-    query_token = request.query_params.get("token")
     role = request.query_params.get("role", "workstation")
     client = request.query_params.get("client", "all")
     try:
@@ -64,9 +69,11 @@ async def setup_bash_script(request: Request) -> Response:
     Usage: curl -fsSL https://<host>/setup.sh | bash
     Supports ?token=..., ?role=server-cli|workstation, ?client=all|cursor|antigravity
     """
+    query_token = request.query_params.get("token")
+    if query_token is not None and query_token.strip() != "" and not is_request_authenticated(request):
+        return PlainTextResponse("Error: Unauthorized: invalid token parameter.\n", status_code=401)
     headers_dict = dict(request.headers)
     base_url = resolve_server_base_url(headers_dict)
-    query_token = request.query_params.get("token")
     role = request.query_params.get("role", "workstation")
     client = request.query_params.get("client", "all")
     try:

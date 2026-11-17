@@ -22,6 +22,7 @@ from typing import Any
 from src.config import get_memory_data_dir, get_word_limit
 from src.db import get_connection, init_db, resolve_scope, set_alias, upsert_memory
 from src.exporter import sync_markdown_exports
+from src.security_gate import assert_no_secrets_or_injection
 
 INITIAL_FACTS = [
     # --- Global Architecture & Interaction Rules ---
@@ -117,6 +118,10 @@ def validate_facts(facts: list[dict[str, Any]] | None = None) -> list[str]:
                     f"Item #{idx} ({item.get('scope')}/{item.get('subject')}): "
                     f"exceeds {word_limit}-word limit ({word_count} words): '{content}'"
                 )
+            try:
+                assert_no_secrets_or_injection(content, str(item.get("subject", "")))
+            except ValueError as exc:
+                errors.append(f"Item #{idx}: {exc}")
 
         anchors = item.get("anchor_files")
         if not isinstance(anchors, list):
