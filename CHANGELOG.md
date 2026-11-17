@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.9.0](https://github.com/brazaoo4/helios/compare/v1.8.8...v1.9.0) (2026-11-17)
+
+
+### Features
+
+* **db,search,ci:** add WAL connection pooling, Porter FTS5 quotas, incremental exports, and container hardening ([43ac94c](https://github.com/brazaoo4/helios/commit/43ac94c5c54acc14963f7ee8755d151936900484))
+* Phase 2 concurrency, FTS5 recall accuracy, incremental exports, and hardening ([ee2a4d3](https://github.com/brazaoo4/helios/commit/ee2a4d3ce99c26680796393238962eb401f86ecb))
+
 ## [1.8.8](https://github.com/brazaoo4/helios/compare/v1.8.7...v1.8.8) (2026-11-17)
 
 
