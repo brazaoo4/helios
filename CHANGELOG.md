@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.10.0](https://github.com/brazaoo4/helios/compare/v1.9.0...v1.10.0) (2026-11-17)
+
+
+### Features
+
+* Phase 3 Gemini semantic RRF search, diff-aware triage, and contradiction auditor ([b57a012](https://github.com/brazaoo4/helios/commit/b57a012d645af08ce908238926219705b8d17f24))
+* **semantic,webhooks,tools:** add Gemini 256-d RRF search, diff-aware webhook triage, and contradiction auditing ([f731e0d](https://github.com/brazaoo4/helios/commit/f731e0d1d8e0b4f99113e1a6d82234a95619a064))
+
 ## [1.9.0](https://github.com/brazaoo4/helios/compare/v1.8.8...v1.9.0) (2026-11-17)
 
 
