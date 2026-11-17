@@ -36,6 +36,7 @@ def generate_setup_powershell(
     active_limit = get_word_limit()
     directive = generate_global_directive(role_norm, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
+    guard_script = generate_guard_hook_script().strip()
 
     esc_base = escape_ps_single_quote(clean_base)
     esc_role = escape_ps_single_quote(role_norm)
@@ -141,6 +142,12 @@ if ((Test-Path $claudeDir) -or $targetClient -eq "claude-desktop") {{
 }}
 
 $claudeDotDir = Join-Path $env:USERPROFILE ".claude"
+if ((Get-Command claude -ErrorAction SilentlyContinue) -and ($targetClient -eq "claude-code" -or $targetClient -eq "all")) {{
+    try {{
+        claude mcp add --transport sse helios $sseUrl 2>$null
+        Write-Host "  [OK] Claude Code CLI MCP registered" -ForegroundColor Green
+    }} catch {{}}
+}}
 if ((Test-Path $claudeDotDir) -or (Test-Path $claudeDir) -or $targetClient -eq "claude-desktop" -or $targetClient -eq "claude-code") {{
     $claudeMdPath = Join-Path $claudeDotDir "CLAUDE.md"
     Set-HeliosDirective -FilePath $claudeMdPath
@@ -251,6 +258,36 @@ $skillText = @'
 [System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
 Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
 
+# 10. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
+$scriptsDir = Join-Path $configDir "scripts"
+if (-not (Test-Path $scriptsDir)) {{ New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }}
+$guardPath = Join-Path $scriptsDir "helios_guard.py"
+$guardText = @'
+{guard_script}
+'@
+[System.IO.File]::WriteAllText($guardPath, $guardText, [System.Text.Encoding]::UTF8)
+
+$hooksPath = Join-Path $configDir "hooks.json"
+$hooksData = @{{}}
+if (Test-Path $hooksPath) {{
+    try {{
+        $hExisting = Get-Content -Path $hooksPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+        if ($hExisting) {{ $hooksData = $hExisting }}
+    }} catch {{}}
+}}
+$hooksData["helios-write-through-guard"] = @{{
+    PreInvocation = @(
+        @{{
+            type = "command"
+            command = "python3 `"$guardPath`""
+            timeout = 5
+        }}
+    )
+}}
+$hooksJson = $hooksData | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($hooksPath, $hooksJson, [System.Text.Encoding]::UTF8)
+Write-Host "  [OK] Helios Write-Through guard hook registered in $hooksPath" -ForegroundColor Green
+
 Write-Host "`n==================================================" -ForegroundColor Cyan
 Write-Host "Helios Client Environment Configured Successfully!" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
@@ -282,6 +319,7 @@ def generate_setup_bash(
     active_limit = get_word_limit()
     directive = generate_global_directive(role_norm, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
+    guard_script = generate_guard_hook_script().strip()
     guard_script = generate_guard_hook_script().strip()
 
     esc_base = escape_bash_single_quote(clean_base)

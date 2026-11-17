@@ -193,3 +193,28 @@ def test_sync_markdown_exports_cleanup_on_scope_migration():
     assert not old_active.exists()
     assert not old_hist.exists()
 
+
+def test_incremental_sync_markdown_exports_preserves_other_scopes():
+    upsert_memory("scope-a", "fact", "Scope A runs on port 8001", subject="port-a")
+    upsert_memory("scope-b", "fact", "Scope B runs on port 8002", subject="port-b")
+    sync_markdown_exports()
+
+    export_dir = get_export_dir()
+    file_b = export_dir / "scope-b.md"
+    assert file_b.exists()
+    mtime_b_before = file_b.stat().st_mtime_ns
+
+    res = upsert_memory("scope-a", "fact", "Scope A updated to port 8011", subject="port-a")
+    written = sync_markdown_exports(scopes=["scope-a"])
+    assert any("scope-a.md" in p for p in written)
+    assert not any("scope-b.md" in p for p in written)
+    assert file_b.exists()
+    assert file_b.stat().st_mtime_ns == mtime_b_before
+
+    from src.db import deprecate_memory
+
+    deprecate_memory(res["id"], reason="retired in incremental test")
+    sync_markdown_exports(scopes=["scope-a"])
+    hist_a = (get_changelog_dir() / "scope-a_history.md").read_text(encoding="utf-8")
+    assert "_(reason: retired in incremental test)_" in hist_a
+

@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 from typing import Any
 
@@ -11,9 +12,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from src.config import get_api_key, get_webhook_secret
-from src.db import flag_stale_by_files
+from src.db import flag_stale_by_files, resolve_scope
 from src.exporter import sync_markdown_exports
 from src.middleware.auth import MAX_WEBHOOK_BYTES, _read_bounded_body
+
+logger = logging.getLogger("helios.webhooks")
 
 
 def verify_forgejo_signature(
@@ -149,7 +152,9 @@ def _process_webhook_drift(
         commit_sha=commit_sha,
     )
     if flagged_count > 0:
-        sync_markdown_exports()
+        resolved_scope = resolve_scope(repo_name)
+        sync_scopes = [resolved_scope] if resolved_scope == "global" else [resolved_scope, "global"]
+        sync_markdown_exports(scopes=sync_scopes)
     return flagged_count
 
 
@@ -186,6 +191,7 @@ async def git_webhook(request: Request) -> JSONResponse:
         request, raw_body, webhook_secret
     )
     if not is_valid:
+        logger.warning("Rejected %s webhook due to invalid or missing signature.", provider)
         return JSONResponse(
             {"status": "error", "message": "Invalid or missing webhook signature."},
             status_code=401,

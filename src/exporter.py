@@ -5,6 +5,7 @@ import sqlite3
 import tarfile
 import tempfile
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 
 from src.config import MUTABLE_SETTINGS, get_changelog_limit, get_memory_data_dir
@@ -75,13 +76,22 @@ def _should_write_markdown(target_path: Path, new_content: str) -> bool:
         return True
 
 
-def sync_markdown_exports() -> list[str]:
+def sync_markdown_exports(scopes: Iterable[str] | None = None) -> list[str]:
     """
-    Render all active/stale memories to exports/<scope>.md
+    Render active/stale memories to exports/<scope>.md
     and superseded/archived history to exports/changelog/<scope>_history.md.
 
+    When scopes is provided, only the specified scopes are synchronized incrementally
+    without scanning unrelated scopes or cleaning up other scope files.
     Returns a list of all written file paths.
     """
+    incremental = scopes is not None
+    explicit_scopes = (
+        sorted({str(s).strip() for s in scopes if str(s).strip()}) if scopes is not None else None
+    )
+    if incremental and not explicit_scopes:
+        return []
+
     with _EXPORT_LOCK:
         export_dir = get_export_dir()
         changelog_dir = get_changelog_dir()
@@ -94,12 +104,16 @@ def sync_markdown_exports() -> list[str]:
 
         with get_connection() as conn:
             conn.execute("BEGIN DEFERRED")
-            scopes = [
-                r["scope"]
-                for r in conn.execute("SELECT DISTINCT scope FROM memories ORDER BY scope").fetchall()
-            ]
+            target_scopes = (
+                explicit_scopes
+                if explicit_scopes is not None
+                else [
+                    r["scope"]
+                    for r in conn.execute("SELECT DISTINCT scope FROM memories ORDER BY scope").fetchall()
+                ]
+            )
 
-            for scope in scopes:
+            for scope in target_scopes:
                 if len(scope) > 64:
                     continue
                 safe_name = sanitize_filename(scope)
@@ -146,7 +160,7 @@ def sync_markdown_exports() -> list[str]:
                 # --- 2. Historical Changelog Audit Log ---
                 history_rows = conn.execute(
                     """
-                    SELECT id, category, subject, content, status, superseded_by, valid_from, valid_to
+                    SELECT id, category, subject, content, status, stale_reason, updated_by, superseded_by, valid_from, valid_to
                     FROM memories
                     WHERE scope = ? AND status IN ('superseded', 'archived')
                     ORDER BY valid_to DESC
@@ -170,8 +184,14 @@ def sync_markdown_exports() -> list[str]:
                             action_tag = "[archived]"
 
                         subj = f"**[{h['subject']}]** " if h["subject"] else ""
+                        reason_suffix = (
+                            f" _(reason: {h['stale_reason']})_"
+                            if h["status"] == "archived" and h["stale_reason"]
+                            else ""
+                        )
+                        by_suffix = f" _(by: {h['updated_by']})_" if h["updated_by"] else ""
                         h_lines.append(
-                            f"- `#{h['id']}` {action_tag} ({h['valid_from']} to {h['valid_to']}): {subj}{h['content']}"
+                            f"- `#{h['id']}` {action_tag} ({h['valid_from']} to {h['valid_to']}): {subj}{h['content']}{reason_suffix}{by_suffix}"
                         )
 
                     hist_content_str = "\n".join(h_lines) + "\n"
@@ -182,20 +202,21 @@ def sync_markdown_exports() -> list[str]:
                 elif hist_file.exists() and hist_file not in expected_hist_files:
                     hist_file.unlink()
 
-        # Clean up orphaned Markdown files from deleted or migrated scopes
-        if export_dir.exists():
-            for existing_md in export_dir.glob("*.md"):
-                if existing_md.name.startswith(".tmp_"):
-                    continue
-                if existing_md not in expected_active_files:
-                    existing_md.unlink(missing_ok=True)
+        # Clean up orphaned Markdown files from deleted or migrated scopes (full-sync mode only)
+        if not incremental:
+            if export_dir.exists():
+                for existing_md in export_dir.glob("*.md"):
+                    if existing_md.name.startswith(".tmp_"):
+                        continue
+                    if existing_md not in expected_active_files:
+                        existing_md.unlink(missing_ok=True)
 
-        if changelog_dir.exists():
-            for existing_hist in changelog_dir.glob("*.md"):
-                if existing_hist.name.startswith(".tmp_"):
-                    continue
-                if existing_hist not in expected_hist_files:
-                    existing_hist.unlink(missing_ok=True)
+            if changelog_dir.exists():
+                for existing_hist in changelog_dir.glob("*.md"):
+                    if existing_hist.name.startswith(".tmp_"):
+                        continue
+                    if existing_hist not in expected_hist_files:
+                        existing_hist.unlink(missing_ok=True)
 
         return written_paths
 

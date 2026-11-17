@@ -86,3 +86,76 @@ def test_hybrid_mcp_sse_token_injection():
     anyio.run(hybrid_handler, scope, fake_receive, fake_send)
     assert any(m.get("type") == "http.response.start" and m.get("status") == 200 for m in messages_sent)
 
+
+def test_streamable_http_full_session_lifecycle_and_attribution():
+    with TestClient(app) as client:
+        base_headers = {
+            "Accept": "application/json, text/event-stream",
+            "X-Helios-Client": "server-cli-test",
+        }
+        res_init = client.post(
+            "/mcp",
+            headers=base_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "lifecycle-test", "version": "1.0"},
+                },
+            },
+        )
+        assert res_init.status_code == 200
+        sid = res_init.headers.get("mcp-session-id")
+        assert sid
+
+        session_headers = {**base_headers, "mcp-session-id": sid}
+        res_notif = client.post(
+            "/mcp",
+            headers=session_headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        assert res_notif.status_code in (200, 202, 204)
+
+        res_save = client.post(
+            "/mcp",
+            headers=session_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "save_memory",
+                    "arguments": {
+                        "scope": "mcp-lifecycle",
+                        "category": "fact",
+                        "subject": "port",
+                        "content": "Lifecycle service runs on port 7777",
+                    },
+                },
+            },
+        )
+        assert res_save.status_code == 200
+        assert "Memory #" in res_save.text
+
+        res_recall = client.post(
+            "/mcp",
+            headers=session_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "recall_memories",
+                    "arguments": {"scope": "mcp-lifecycle", "query": "7777"},
+                },
+            },
+        )
+        assert res_recall.status_code == 200
+        assert "7777" in res_recall.text
+
+        res_del = client.delete("/mcp", headers=session_headers)
+        assert res_del.status_code in (200, 202, 204)
+

@@ -14,6 +14,7 @@ Or inside Docker:
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ from src.config import get_memory_data_dir, get_word_limit
 from src.db import get_connection, init_db, resolve_scope, set_alias, upsert_memory
 from src.exporter import sync_markdown_exports
 from src.security_gate import assert_no_secrets_or_injection
+
+logger = logging.getLogger("helios.seed")
 
 INITIAL_FACTS = [
     # --- Global Architecture & Interaction Rules ---
@@ -338,18 +341,19 @@ def ingest_declarative_seed_files(data_dir: Path | None = None) -> int:
 
         try:
             items, aliases = _parse_declarative_seed_file(seed_file)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to parse declarative seed file %s: %s", seed_file, exc)
             continue
 
         for alias_key, canonical_val in aliases.items():
             if isinstance(alias_key, str) and isinstance(canonical_val, str):
                 try:
                     set_alias(alias_key, canonical_val)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.warning("Invalid alias in %s (%r -> %r): %s", seed_file, alias_key, canonical_val, exc)
 
         ingested_in_file = 0
-        for item in items:
+        for idx, item in enumerate(items, 1):
             if not isinstance(item, dict):
                 continue
             raw_scope = str(item.get("scope", "global"))
@@ -369,11 +373,20 @@ def ingest_declarative_seed_files(data_dir: Path | None = None) -> int:
                     anchor_files=anchor_files,
                 )
                 ingested_in_file += 1
-            except ValueError:
+            except ValueError as exc:
                 # Skip invalid items so one bad entry doesn't crash startup
+                logger.warning("Skipped invalid seed item #%d in %s: %s", idx, seed_file, exc)
                 continue
 
-        sync_markdown_exports()
+        if len(items) > 0 and ingested_in_file == 0:
+            logger.warning(
+                "No items ingested from non-empty seed file %s; keeping file without renaming to .imported.",
+                seed_file,
+            )
+            continue
+
+        if ingested_in_file > 0:
+            sync_markdown_exports()
         imported_target = target_dir / f"{filename}.imported"
         os.replace(seed_file, imported_target)
         total_ingested += ingested_in_file

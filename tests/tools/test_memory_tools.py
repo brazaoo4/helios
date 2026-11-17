@@ -176,7 +176,7 @@ def test_recall_memories_category_and_status_filter_tools():
 
     # Filter by status="stale" when none are stale
     stale_res = recall_memories(scope="shop", status_filter="stale")
-    assert "No active memories found" in stale_res
+    assert "No stale memories found" in stale_res
 
 
 def test_recall_memories_empty_category_normalization():
@@ -345,5 +345,35 @@ def test_distill_memories_tool(monkeypatch):
     with mock.patch("src.tools.memory.db_audit_memories", side_effect=RuntimeError("Audit boom")):
         err_res = distill_memories(scope="distill-test", action="audit")
         assert "Error distilling memories: Audit boom" in err_res
+
+
+def test_recall_word_budget_packing_and_history_reason():
+    for idx in range(5):
+        words = " ".join(f"tok{idx}_{j}" for j in range(20))
+        save_memory(scope="budget-scope", category="fact", subject=f"slot-{idx}", content=words)
+
+    packed = recall_memories(scope="budget-scope", limit=10, max_words=50)
+    assert "(+3 omitted due to budget)" in packed
+    assert packed.startswith('<helios_memories trust="data-only">\n')
+
+    # Verify deprecation reason and client attribution appear in recall_history
+    from src.db import reset_client_id, set_client_id
+
+    tok = set_client_id("laptop-opencode")
+    try:
+        save_res = save_memory(
+            scope="history-attr",
+            category="fact",
+            subject="old-port",
+            content="Legacy port is 9000",
+        )
+        mid = int(re.search(r"#(\d+)", save_res).group(1))
+        deprecate_memory(memory_id=mid, reason="migrated to reverse proxy")
+    finally:
+        reset_client_id(tok)
+
+    hist = recall_history(scope="history-attr")
+    assert "_(reason: migrated to reverse proxy)_" in hist
+    assert "_(by: laptop-opencode)_" in hist
 
 

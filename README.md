@@ -61,6 +61,9 @@ services:
     container_name: helios
     restart: unless-stopped
     user: "1000:1000"  # Must match ownership of your host data directory
+    read_only: true
+    tmpfs:
+      - /tmp
     ports:
       - "127.0.0.1:8000:8000"    # Omit if routing internally via a reverse proxy network
     volumes:
@@ -108,7 +111,7 @@ services:
       - HELIOS_GIT_OWNER=        # Optional username/org filter
       - HELIOS_WEBHOOK_URL=      # e.g., https://helios.example.com/webhook/git
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -416,7 +419,7 @@ Helios exposes 11 FastMCP tools with strict Pydantic field descriptions, worker-
 
 | Tool | Key Parameters | Purpose |
 | :--- | :--- | :--- |
-| `recall_memories` | `scope`, `query`, `category`, `status_filter`, `limit`, `include_global`, `directive_version` | Search active/stale memories in `<scope>` via FTS5 BM25 ranking or categorical priority (`rule` → `fact` → `preference` → `episodic`). |
+| `recall_memories` | `scope`, `query`, `category`, `status_filter`, `limit`, `include_global`, `directive_version`, `max_words` | Search active/stale memories in `<scope>` via Porter FTS5 BM25 ranking or scoped pre-flight quotas (`max_words` cap). |
 | `save_memory` | `scope`, `category`, `content`, `subject`, `anchor_files`, `replaces_id` | Save or supersede an atomic memory (≤ `HELIOS_WORD_LIMIT` words) and sync Markdown exports. |
 | `revalidate_memories` | `memory_ids` | Batch-restore `[STALE]` memories back to active after verifying file changes. |
 | `deprecate_memory` | `memory_id`, `reason` | Retire/archive an obsolete memory and log the reason in the scope's changelog. |
@@ -441,6 +444,7 @@ recall_memories(
     limit: int = 8,
     include_global: bool = True,
     directive_version: str = "",
+    max_words: int = 250,
 ) -> str
 
 # 2. Store or supersede an atomic memory

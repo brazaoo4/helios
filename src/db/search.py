@@ -1,10 +1,12 @@
 """
 Full-Text Search & Synonym-Expanded BM25 Ranking.
 
-Provides FTS5 MATCH query building with 10 bidirectional domain synonym clusters
-and column-weighted BM25 ranking (subject 10x, scope 5x, content 1x).
+Provides Porter-stemmed FTS5 MATCH query building with domain synonym clusters,
+compound/version sub-token matching, scoped pre-flight quotas, and weighted BM25 ranking.
 """
 
+import logging
+import math
 import re
 import sqlite3
 from typing import Any
@@ -12,6 +14,8 @@ from typing import Any
 from src.db.connection import get_connection, now_iso
 from src.db.memories import prune_expired_episodic
 from src.db.scopes import resolve_scope
+
+logger = logging.getLogger("helios.search")
 
 SYNONYM_GROUPS: list[set[str]] = [
     # Database
@@ -41,20 +45,81 @@ for _group in SYNONYM_GROUPS:
     for _w in _group:
         _SYNONYM_LOOKUP[_w] = tuple(sorted(_group - {_w}))
 
+_VERSION_TOKEN_RE = re.compile(r"^[vV]?\d+(?:\.\d+)+$")
+_COMPOUND_SEP_RE = re.compile(r"[-_./:]+")
+_CATEGORY_RANK = {"rule": 1, "fact": 2, "preference": 3, "episodic": 4}
+
+
+def _lookup_synonyms(word: str) -> tuple[str, ...]:
+    """Look up domain synonyms for word or its singularized stem."""
+    w = word.lower()
+    if w in _SYNONYM_LOOKUP:
+        return _SYNONYM_LOOKUP[w]
+    if w.endswith("ies") and len(w) > 3:
+        cand = w[:-3] + "y"
+        if cand in _SYNONYM_LOOKUP:
+            return _SYNONYM_LOOKUP[cand]
+    if w.endswith("s") and len(w) > 2:
+        cand = w[:-1]
+        if cand in _SYNONYM_LOOKUP:
+            return _SYNONYM_LOOKUP[cand]
+    if w.endswith("es") and len(w) > 3:
+        cand = w[:-2]
+        if cand in _SYNONYM_LOOKUP:
+            return _SYNONYM_LOOKUP[cand]
+    return ()
+
 
 def build_fts5_query(clean_tokens: list[str]) -> str:
     """
-    Construct an FTS5 MATCH expression with synonym expansion.
-    For each user token, if matching synonyms exist, creates an OR cluster:
-    e.g. '("db"* OR "database"* OR "sql"*)'.
+    Construct an FTS5 MATCH expression with version normalization,
+    compound sub-token expansion, and domain synonym clusters.
     """
     clusters: list[str] = []
     for raw_tok in clean_tokens[:32]:
         safe_tok = raw_tok.replace("\x00", "").replace('"', '""').strip()
         if not safe_tok:
             continue
+        if len(safe_tok) == 1:
+            if safe_tok.isdigit():
+                clusters.append(f'"{safe_tok}"')
+            continue
+
         tok_lower = safe_tok.lower()
-        synonyms = _SYNONYM_LOOKUP.get(tok_lower, ())
+        if _VERSION_TOKEN_RE.match(safe_tok):
+            num_ver = safe_tok.lstrip("vV")
+            clusters.append(f'("{num_ver}"* OR "v{num_ver}"*)')
+            continue
+
+        if _COMPOUND_SEP_RE.search(safe_tok):
+            subparts = [
+                p for p in _COMPOUND_SEP_RE.split(tok_lower)
+                if len(p) >= 2 and not p.isdigit()
+            ]
+            sub_clauses = [f'"{safe_tok}"*']
+            if len(subparts) >= 2:
+                and_expr = " AND ".join(f'"{p.replace(chr(34), chr(34) * 2)}"*' for p in subparts[:4])
+                sub_clauses.append(f"({and_expr})")
+
+            seen_syns: list[str] = []
+            for cand in [tok_lower, *subparts]:
+                for s in _lookup_synonyms(cand):
+                    if s != tok_lower and s not in subparts and s not in seen_syns:
+                        seen_syns.append(s)
+                    if len(seen_syns) >= 3:
+                        break
+                if len(seen_syns) >= 3:
+                    break
+            for s in seen_syns[:3]:
+                sub_clauses.append(f'"{s.replace(chr(34), chr(34) * 2)}"*')
+
+            if len(sub_clauses) > 1:
+                clusters.append(f"({' OR '.join(sub_clauses)})")
+            else:
+                clusters.append(sub_clauses[0])
+            continue
+
+        synonyms = _lookup_synonyms(tok_lower)
         top_syns = [s for s in synonyms if s != tok_lower][:3]
         if top_syns:
             safe_syns = [s.replace('"', '""') for s in top_syns]
@@ -74,10 +139,10 @@ def query_memories(
     status_filter: str = "all",
 ) -> list[dict[str, Any]]:
     """
-    Retrieve active memories using FTS5 BM25 search or prioritized categorical fallback.
+    Retrieve active memories using FTS5 BM25 search or prioritized scoped fallback.
 
     - Prunes expired episodic memories first.
-    - Searches both the resolved scope and 'global' (if include_global=True).
+    - Enforces target-scope slot quota (>= ceil(limit * 0.6)) before global rules on pre-flight empty queries.
     - Clamps limit between 1 and 50.
     - Supports optional category filter ('rule', 'fact', 'preference', 'episodic').
     - Supports status_filter ('all' -> active & stale, 'active' -> active only, 'stale' -> stale only).
@@ -115,34 +180,33 @@ def query_memories(
         placeholders = ",".join("?" for _ in scopes)
 
         if query.strip():
-            # 1. Extract valid words/numbers/tokens, preserving technical punctuation (dots, colons, hyphens)
-            clean_query = query.replace('"', ' ').replace('\x00', ' ')
+            clean_query = query.replace('"', " ").replace("\x00", " ")
             raw_tokens = re.findall(r"[\w.:-]+", clean_query, flags=re.UNICODE)
-            clean_tokens = []
+            stopwords = {
+                "the", "is", "in", "to", "of", "for", "on", "with", "at", "by", "an", "be", "as",
+            }
+            clean_tokens: list[str] = []
             for tok in raw_tokens:
                 t = tok.strip("-_.:*")
                 if not t:
                     continue
                 if t.upper() in ("AND", "OR", "NOT"):
                     continue
+                if len(t) == 1 and not t.isdigit():
+                    continue
                 clean_tokens.append(t)
 
-            # If multiple tokens exist, drop 1-char tokens and common stopwords
             if len(clean_tokens) > 1:
-                stopwords = {"the", "is", "in", "to", "of", "for", "on", "with", "at", "by", "an", "be", "as"}
-                filtered = [
-                    t for t in clean_tokens
-                    if len(t) > 1 and t.lower() not in stopwords
-                ]
+                filtered = [t for t in clean_tokens if t.lower() not in stopwords]
                 if filtered:
                     clean_tokens = filtered
 
-            # If user query was only punctuation/operators (e.g. '***:::'), return empty list safely
             if not clean_tokens:
                 return []
 
-            # 2. Quote each token as a prefix search cluster with synonym expansion
             fts_query = build_fts5_query(clean_tokens)
+            if not fts_query:
+                return []
 
             try:
                 rows = conn.execute(
@@ -156,24 +220,21 @@ def query_memories(
                       AND m.valid_to IS NULL
                       {cat_clause_m}
                       AND memories_fts MATCH ?
-                    ORDER BY bm25(memories_fts, 5.0, 10.0, 1.0), m.hit_count DESC
+                    ORDER BY
+                        (bm25(memories_fts, 5.0, 10.0, 1.0)
+                         - CASE WHEN m.status = 'active' THEN 0.5 ELSE 0.0 END
+                         - CASE m.category WHEN 'rule' THEN 0.3 WHEN 'fact' THEN 0.2 WHEN 'preference' THEN 0.1 ELSE 0.0 END),
+                        m.hit_count DESC
                     LIMIT ?
                     """,
                     (*scopes, *cat_params, fts_query, limit),
                 ).fetchall()
-            except sqlite3.OperationalError:
-                # Failsafe fallback: return empty list on any syntax anomaly
+                results = [dict(r) for r in rows]
+            except sqlite3.OperationalError as exc:
+                logger.warning("FTS5 MATCH query failed (%s): %s", exc, fts_query)
                 return []
         else:
-            # Empty query: return rules first, then facts, preferences, episodic
-            rows = conn.execute(
-                f"""
-                SELECT id, scope, category, subject, content, status, stale_reason, anchor_files
-                FROM memories
-                WHERE scope IN ({placeholders})
-                  AND {status_clause_bare}
-                  AND valid_to IS NULL
-                  {cat_clause_bare}
+            order_sql = """
                 ORDER BY
                     CASE category
                         WHEN 'rule' THEN 1
@@ -184,13 +245,72 @@ def query_memories(
                     hit_count DESC,
                     id DESC
                 LIMIT ?
-                """,
-                (*scopes, *cat_params, limit),
-            ).fetchall()
+            """
+            if include_global and scope != "global":
+                scope_rows = [
+                    dict(r)
+                    for r in conn.execute(
+                        f"""
+                        SELECT id, scope, category, subject, content, status, stale_reason, anchor_files, hit_count
+                        FROM memories
+                        WHERE scope = ?
+                          AND {status_clause_bare}
+                          AND valid_to IS NULL
+                          {cat_clause_bare}
+                        {order_sql}
+                        """,
+                        (scope, *cat_params, limit),
+                    ).fetchall()
+                ]
+                global_rows = [
+                    dict(r)
+                    for r in conn.execute(
+                        f"""
+                        SELECT id, scope, category, subject, content, status, stale_reason, anchor_files, hit_count
+                        FROM memories
+                        WHERE scope = 'global'
+                          AND {status_clause_bare}
+                          AND valid_to IS NULL
+                          {cat_clause_bare}
+                        {order_sql}
+                        """,
+                        (*cat_params, limit),
+                    ).fetchall()
+                ]
+                scope_quota = math.ceil(limit * 0.6)
+                take_scope = min(len(scope_rows), max(scope_quota, limit - len(global_rows)))
+                selected = list(scope_rows[:take_scope])
+                remaining = limit - len(selected)
+                if remaining > 0:
+                    selected.extend(global_rows[:remaining])
+                if len(selected) < limit and take_scope < len(scope_rows):
+                    selected.extend(scope_rows[take_scope : take_scope + (limit - len(selected))])
+                selected.sort(
+                    key=lambda r: (
+                        _CATEGORY_RANK.get(r["category"], 4),
+                        0 if r["scope"] == scope else 1,
+                        -r["hit_count"],
+                        -r["id"],
+                    )
+                )
+                for r in selected:
+                    r.pop("hit_count", None)
+                results = selected
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT id, scope, category, subject, content, status, stale_reason, anchor_files
+                    FROM memories
+                    WHERE scope = ?
+                      AND {status_clause_bare}
+                      AND valid_to IS NULL
+                      {cat_clause_bare}
+                    {order_sql}
+                    """,
+                    (scope, *cat_params, limit),
+                ).fetchall()
+                results = [dict(r) for r in rows]
 
-        results = [dict(r) for r in rows]
-
-        # 3. Bump hit_count and refresh last_accessed for returned results (skip for administrative 'stale' audits)
         if results and norm_status != "stale":
             ids = [r["id"] for r in results]
             id_str = ",".join("?" for _ in ids)

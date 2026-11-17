@@ -833,3 +833,64 @@ def test_db_package_reexports_contract():
         assert sym in db.__all__, f"'{sym}' not listed in src.db.__all__"
 
 
+def test_preflight_recall_scope_quota_prevents_global_starvation():
+    for i in range(10):
+        upsert_memory("global", "rule", f"Global guardrail rule number {i}", subject=f"g-rule-{i}")
+    for i in range(5):
+        upsert_memory("myproj", "fact", f"Project fact number {i} on port {8000 + i}", subject=f"p-fact-{i}")
+
+    results = query_memories("myproj", "", include_global=True, limit=8)
+    assert len(results) == 8
+    proj_results = [r for r in results if r["scope"] == "myproj"]
+    global_results = [r for r in results if r["scope"] == "global"]
+    assert len(proj_results) == 5
+    assert len(global_results) == 3
+
+
+def test_fts5_porter_version_and_subtoken_matching():
+    with get_connection() as conn:
+        user_ver = conn.execute("PRAGMA user_version;").fetchone()[0]
+        assert user_ver == 2
+
+    upsert_memory(
+        "fts-pro",
+        "fact",
+        "Helios v1.8.7 runs Python 3.12 via docker-compose.prod.yml with PostgreSQL databases",
+        subject="db-port",
+    )
+
+    assert len(query_memories("fts-pro", "1.8.7")) == 1
+    assert len(query_memories("fts-pro", "v3.12")) == 1
+    assert len(query_memories("fts-pro", "docker-compose.yml")) == 1
+    assert len(query_memories("fts-pro", "db-port")) == 1
+    assert len(query_memories("fts-pro", "databases")) == 1
+    assert len(query_memories("fts-pro", "sql")) == 1
+
+
+def test_sqlite_wal_concurrent_readers_and_writers():
+    from concurrent.futures import ThreadPoolExecutor
+
+    upsert_memory(
+        "conc",
+        "fact",
+        "Baseline anchored fact for concurrent check",
+        subject="base",
+        anchor_files=["compose.yaml"],
+    )
+
+    def _worker(idx: int) -> None:
+        upsert_memory("conc", "fact", f"Worker {idx} writes concurrent fact", subject=f"w-{idx}")
+        res = query_memories("conc", "concurrent")
+        assert isinstance(res, list)
+        flag_stale_by_files("conc", ["other.yaml"], f"sha{idx}")
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_worker, i) for i in range(18)]
+        for fut in futures:
+            fut.result()
+
+    with get_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM memories WHERE scope = 'conc' AND valid_to IS NULL").fetchone()[0]
+        assert count == 19
+
+
