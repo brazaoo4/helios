@@ -5,7 +5,7 @@ import socket
 import pytest
 from starlette.testclient import TestClient
 
-from src.db import init_db
+from src.db import close_all_connections, init_db
 from src.server import app
 
 _ORIG_GETADDRINFO = socket.getaddrinfo
@@ -48,6 +48,8 @@ def isolated_helios_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", _test_getaddrinfo)
     init_db()
+    yield
+    close_all_connections()
 
 
 @pytest.fixture

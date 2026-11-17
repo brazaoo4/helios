@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.config import get_episodic_ttl_days, get_word_limit
-from src.db.connection import get_connection, get_db_path, now_iso
+from src.db.connection import get_client_id, get_connection, get_db_path, now_iso
 from src.db.drift import _normalize_repo_path
 from src.db.scopes import resolve_scope
 from src.security_gate import assert_no_secrets_or_injection
@@ -61,6 +61,7 @@ def upsert_memory(
     subject: str = "",
     anchor_files: list[str] | None = None,
     replaces_id: int | None = None,
+    updated_by: str = "",
 ) -> dict[str, Any]:
     """
     AUDN Write Gate:
@@ -111,6 +112,7 @@ def upsert_memory(
     if any(len(a) > 240 or any(c in a for c in ("`", "\n", "\r")) for a in normalized_anchors):
         raise ValueError("Each anchor_file path must be <= 240 characters without backticks or newlines.")
     anchors_json = json.dumps(normalized_anchors)
+    author = (updated_by or get_client_id() or "").strip()[:64]
     ts = now_iso()
 
     with get_connection() as conn:
@@ -148,6 +150,9 @@ def upsert_memory(
 
             update_fields = ["status = 'active'", "stale_reason = ''", "stale_since = NULL", "last_accessed = ?"]
             params: list[Any] = [ts]
+            if author:
+                update_fields.append("updated_by = ?")
+                params.append(author)
             if anchor_files is not None:
                 update_fields.append("anchor_files = ?")
                 params.append(anchors_json)
@@ -181,10 +186,10 @@ def upsert_memory(
         cur = conn.execute(
             """
             INSERT INTO memories (
-                scope, category, subject, content, status, anchor_files, valid_from, last_accessed
-            ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+                scope, category, subject, content, status, anchor_files, valid_from, last_accessed, updated_by
+            ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
             """,
-            (scope, category, subject_clean, content_clean, anchors_json, ts, ts),
+            (scope, category, subject_clean, content_clean, anchors_json, ts, ts, author),
         )
         new_id = cur.lastrowid
         superseded_ids = []
@@ -250,9 +255,10 @@ def deprecate_memory(memory_id: int, reason: str = "") -> dict[str, Any]:
             raise ValueError(f"Memory #{memory_id} does not exist or is already inactive.")
 
         stale_reason = clean_reason if clean_reason else "deprecated by user/agent"
+        author = (get_client_id() or "").strip()[:64]
         conn.execute(
-            "UPDATE memories SET status = 'archived', valid_to = ?, stale_reason = ? WHERE id = ?",
-            (ts, stale_reason, memory_id),
+            "UPDATE memories SET status = 'archived', valid_to = ?, stale_reason = ?, updated_by = COALESCE(NULLIF(?, ''), updated_by) WHERE id = ?",
+            (ts, stale_reason, author, memory_id),
         )
 
         return {
@@ -283,21 +289,24 @@ def revalidate_memories(memory_ids: list[int]) -> dict[str, Any]:
         conn.execute("BEGIN IMMEDIATE")
         placeholders = ",".join("?" for _ in unique_ids)
         rows = conn.execute(
-            f"SELECT id, status, valid_to FROM memories WHERE id IN ({placeholders})",
+            f"SELECT id, scope, status, valid_to FROM memories WHERE id IN ({placeholders})",
             unique_ids,
         ).fetchall()
 
         stale_ids = {r["id"] for r in rows if r["status"] == "stale" and r["valid_to"] is None}
+        revalidated_scopes = sorted({r["scope"] for r in rows if r["id"] in stale_ids})
 
         if stale_ids:
+            author = (get_client_id() or "").strip()[:64]
             update_placeholders = ",".join("?" for _ in stale_ids)
             conn.execute(
                 f"""
                 UPDATE memories
-                SET status = 'active', stale_reason = '', stale_since = NULL, last_accessed = ?
+                SET status = 'active', stale_reason = '', stale_since = NULL, last_accessed = ?,
+                    updated_by = COALESCE(NULLIF(?, ''), updated_by)
                 WHERE id IN ({update_placeholders})
                 """,
-                (ts, *stale_ids),
+                (ts, author, *stale_ids),
             )
 
         revalidated = [mid for mid in unique_ids if mid in stale_ids]
@@ -306,4 +315,5 @@ def revalidate_memories(memory_ids: list[int]) -> dict[str, Any]:
         return {
             "revalidated_ids": revalidated,
             "not_found_or_not_stale_ids": not_found_or_not_stale,
+            "scopes": revalidated_scopes,
         }

@@ -1,17 +1,45 @@
 """
-SQLite Schema Initialization & DDL Management.
+SQLite Schema Initialization & DDL Migrations.
 
-Creates memories, memories_fts, scope_aliases, and runtime_settings tables,
-indexes, and full-text synchronization triggers.
+Creates memories, memories_fts (Porter-stemmed FTS5), scope_aliases, and
+runtime_settings tables, performance indexes, and versioned schema migrations.
 """
 
 from src.db.connection import get_connection
 
+_FTS_CREATE_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    scope,
+    subject,
+    content,
+    content='memories',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, scope, subject, content)
+    VALUES (new.id, new.scope, new.subject, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, scope, subject, content)
+    VALUES ('delete', old.id, old.scope, old.subject, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF scope, subject, content ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, scope, subject, content)
+    VALUES ('delete', old.id, old.scope, old.subject, old.content);
+    INSERT INTO memories_fts(rowid, scope, subject, content)
+    VALUES (new.id, new.scope, new.subject, new.content);
+END;
+"""
+
 
 def init_db() -> None:
     """
-    Idempotent schema initialization.
-    Creates tables, indexes, and triggers.
+    Idempotent schema initialization and PRAGMA user_version migrations.
+    Creates tables, indexes, and Porter-stemmed FTS5 virtual table + triggers.
     """
     with get_connection() as conn:
         conn.executescript(
@@ -30,7 +58,8 @@ def init_db() -> None:
                 valid_from TEXT NOT NULL,
                 valid_to TEXT DEFAULT NULL,
                 last_accessed TEXT NOT NULL,
-                hit_count INTEGER NOT NULL DEFAULT 0
+                hit_count INTEGER NOT NULL DEFAULT 0,
+                updated_by TEXT DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_memories_active
@@ -39,30 +68,11 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_memories_slot
             ON memories(scope, subject, status);
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                scope,
-                subject,
-                content,
-                content='memories',
-                content_rowid='id'
-            );
+            CREATE INDEX IF NOT EXISTS idx_memories_superseded_by
+            ON memories(superseded_by);
 
-            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, scope, subject, content)
-                VALUES (new.id, new.scope, new.subject, new.content);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, scope, subject, content)
-                VALUES ('delete', old.id, old.scope, old.subject, old.content);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF scope, subject, content ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, scope, subject, content)
-                VALUES ('delete', old.id, old.scope, old.subject, old.content);
-                INSERT INTO memories_fts(rowid, scope, subject, content)
-                VALUES (new.id, new.scope, new.subject, new.content);
-            END;
+            CREATE INDEX IF NOT EXISTS idx_memories_history
+            ON memories(scope, status, valid_to DESC);
 
             CREATE TABLE IF NOT EXISTS scope_aliases (
                 alias TEXT PRIMARY KEY,
@@ -76,7 +86,28 @@ def init_db() -> None:
             );
             """
         )
-        try:
+
+        existing_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(memories);").fetchall()
+        }
+        if "stale_since" not in existing_cols:
             conn.execute("ALTER TABLE memories ADD COLUMN stale_since TEXT DEFAULT NULL;")
-        except Exception:
-            pass
+        if "updated_by" not in existing_cols:
+            conn.execute("ALTER TABLE memories ADD COLUMN updated_by TEXT DEFAULT '';")
+
+        user_version = conn.execute("PRAGMA user_version;").fetchone()[0]
+        if user_version < 2:
+            conn.executescript(
+                f"""
+                DROP TRIGGER IF EXISTS memories_ai;
+                DROP TRIGGER IF EXISTS memories_ad;
+                DROP TRIGGER IF EXISTS memories_au;
+                DROP TABLE IF EXISTS memories_fts;
+                {_FTS_CREATE_SQL}
+                INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+                PRAGMA user_version = 2;
+                """
+            )
+        else:
+            conn.executescript(_FTS_CREATE_SQL)

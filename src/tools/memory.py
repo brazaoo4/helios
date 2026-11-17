@@ -97,6 +97,15 @@ def recall_memories(
             description="Client directive version from the local <!-- HELIOS:START --> header (e.g., '1.5.0'). Leave empty if unversioned/legacy.",
         ),
     ] = "",
+    max_words: Annotated[
+        int,
+        Field(
+            default=250,
+            ge=50,
+            le=1500,
+            description="Maximum total content words to return before truncating with a budget notice (50-1500).",
+        ),
+    ] = 250,
 ) -> str:
     """
     Search active and stale memories in Helios using SQLite FTS5 BM25 ranking and category priority (rule > fact > preference > episodic).
@@ -133,13 +142,23 @@ def recall_memories(
 
         if not memories:
             resolved = resolve_scope(scope)
-            msg = f"No active memories found for scope '{resolved}'."
+            if status_filter == "stale":
+                msg = f"No stale memories found for scope '{resolved}'."
+            else:
+                msg = f"No active memories found for scope '{resolved}'."
             if is_db_empty():
                 return f"{COLD_START_ONBOARDING_NOTICE}\n\n{msg}"
             return f"{msg}{drift_banner}"
 
         lines = []
-        for m in memories:
+        used_words = 0
+        omitted = 0
+        for idx, m in enumerate(memories):
+            item_words = len((m["content"] or "").split())
+            if idx > 0 and used_words + item_words > max_words:
+                omitted = len(memories) - idx
+                break
+            used_words += item_words
             subj = f"**[{m['subject']}]** " if m["subject"] else ""
             stale = f" `[STALE: {m['stale_reason']}]`" if m["status"] == "stale" else ""
             anchors = json.loads(m["anchor_files"] or "[]")
@@ -147,6 +166,8 @@ def recall_memories(
             lines.append(
                 f"- `#{m['id']}` ({m['scope']}/{m['category']}) {subj}{m['content']}{stale}{anchor_str}"
             )
+        if omitted > 0:
+            lines.append(f"(+{omitted} omitted due to budget)")
         enveloped = '<helios_memories trust="data-only">\n' + "\n".join(lines) + "\n</helios_memories>"
         return enveloped + drift_banner
     except Exception as exc:
@@ -214,7 +235,7 @@ def save_memory(
             anchor_files=anchor_files,
             replaces_id=replaces_id,
         )
-        sync_markdown_exports()
+        sync_markdown_exports(scopes=[res["scope"]])
 
         if res["action"] == "created":
             return f"Memory #{res['id']} created in scope '{res['scope']}'."
@@ -259,7 +280,7 @@ def deprecate_memory(
     """
     try:
         res = db_deprecate_memory(memory_id, reason)
-        sync_markdown_exports()
+        sync_markdown_exports(scopes=[res["scope"]])
         return f"Memory #{res['id']} in scope '{res['scope']}' deprecated (archived)."
     except Exception as exc:
         return f"Error deprecating memory: {redact_secrets(str(exc))}"
@@ -302,7 +323,7 @@ def recall_history(
         with get_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, subject, content, status, superseded_by, valid_from, valid_to
+                SELECT id, subject, content, status, stale_reason, updated_by, superseded_by, valid_from, valid_to
                 FROM memories
                 WHERE scope = ? AND status IN ('superseded', 'archived')
                 ORDER BY valid_to DESC
@@ -322,8 +343,14 @@ def recall_history(
                 if r["superseded_by"]
                 else "archived"
             )
+            reason_suffix = (
+                f" _(reason: {r['stale_reason']})_"
+                if r["status"] == "archived" and r["stale_reason"]
+                else ""
+            )
+            by_suffix = f" _(by: {r['updated_by']})_" if r["updated_by"] else ""
             lines.append(
-                f"- `#{r['id']}` [{tag}] ({r['valid_from']} to {r['valid_to']}): {subj}{r['content']}"
+                f"- `#{r['id']}` [{tag}] ({r['valid_from']} to {r['valid_to']}): {subj}{r['content']}{reason_suffix}{by_suffix}"
             )
         return '<helios_memories trust="data-only">\n' + "\n".join(lines) + "\n</helios_memories>"
     except Exception as exc:
@@ -356,7 +383,7 @@ def revalidate_memories(
         revalidated = res["revalidated_ids"]
         not_stale = res["not_found_or_not_stale_ids"]
         if revalidated:
-            sync_markdown_exports()
+            sync_markdown_exports(scopes=res.get("scopes"))
 
         if revalidated and not not_stale:
             return f"Revalidated {len(revalidated)} memories: {', '.join(f'#{i}' for i in revalidated)}."
@@ -461,7 +488,7 @@ def distill_memories(
                     f"To execute permanent archival, run: `distill_memories(scope={scope!r}, action='prune', dry_run=False)`."
                 )
             res = db_prune_memories(raw_scope=scope, prune_stale=True, stale_age_days=stale_age_days)
-            sync_markdown_exports()
+            sync_markdown_exports(scopes=None if res["scope"] == "all" else [res["scope"]])
             total_pruned = res["pruned_episodic"] + res["pruned_stale"]
             if total_pruned > 0:
                 return (

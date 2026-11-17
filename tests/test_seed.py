@@ -341,3 +341,22 @@ def test_seed_cli_modes(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["src.seed", "--reset", "--dry-run"])
     main()
 
+
+def test_ingest_seed_does_not_rename_when_all_items_invalid(tmp_path):
+    bad_yaml = tmp_path / "seed.yaml"
+    bad_yaml.write_text(
+        """
+memories:
+  - scope: broken
+    category: invalid_category
+    subject: bad
+    content: This item fails validation
+""",
+        encoding="utf-8",
+    )
+
+    ingested = ingest_declarative_seed_files(tmp_path)
+    assert ingested == 0
+    assert bad_yaml.exists()
+    assert not (tmp_path / "seed.yaml.imported").exists()
+

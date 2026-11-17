@@ -8,10 +8,14 @@ BM25 search, Git anchor drift tracking, and distillation/hygiene auditing.
 
 from src.db.audit import db_audit_memories, db_prune_memories
 from src.db.connection import (
+    close_all_connections,
+    get_client_id,
     get_connection,
     get_data_dir,
     get_db_path,
     now_iso,
+    reset_client_id,
+    set_client_id,
 )
 from src.db.drift import _normalize_repo_path, flag_stale_by_files
 from src.db.memories import (
@@ -47,11 +51,13 @@ __all__ = [
     "_normalize_alias_key",
     "_normalize_repo_path",
     "build_fts5_query",
+    "close_all_connections",
     "db_audit_memories",
     "db_prune_memories",
     "delete_runtime_setting",
     "deprecate_memory",
     "flag_stale_by_files",
+    "get_client_id",
     "get_connection",
     "get_data_dir",
     "get_db_path",
@@ -65,9 +71,11 @@ __all__ = [
     "prune_expired_episodic",
     "query_memories",
     "remove_alias",
+    "reset_client_id",
     "resolve_scope",
     "revalidate_memories",
     "set_alias",
+    "set_client_id",
     "set_runtime_setting",
     "upsert_memory",
 ]

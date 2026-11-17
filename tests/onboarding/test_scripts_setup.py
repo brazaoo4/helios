@@ -26,6 +26,9 @@ def test_setup_scripts_backtick_and_injection_safety():
     assert "Windsurf MCP registered" in ps_script
     assert "VS Code MCP registered" in ps_script
     assert "OpenCode MCP registered" in ps_script
+    assert "claude mcp add --transport sse helios" in ps_script
+    assert "helios-write-through-guard" in ps_script
+    assert "helios_guard.py" in ps_script
 
     # 2. Bash setup script uses single-quoted heredocs and python args pass-through
     sh_script = generate_setup_bash("https://helios.example.com", query_token="my-token+123")

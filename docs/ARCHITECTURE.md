@@ -24,20 +24,20 @@ The codebase is organized into focused, single-responsibility packages following
 
 ```text
 src/
-├── server.py              # Composition root (< 130 lines) & backward-compatible re-exports
-│   ├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
-│   ├── security_gate.py       # AUDN secret firewall, injection-marker blocker, log/error redaction
+├── server.py              # Composition root (< 160 lines) & backward-compatible re-exports
+├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
+├── security_gate.py       # AUDN secret firewall, injection-marker blocker, log/error redaction
 ├── db/                    # Modular SQLite Database Engine
 │   ├── __init__.py        # Re-exports complete engine contract with __all__ (100% backward compatible)
-│   ├── connection.py      # Connection factory, WAL pragmas, DB path resolution, timestamps
-│   ├── schema.py          # Idempotent DDL, triggers, indexes, FTS5 virtual table
+│   ├── connection.py      # Persistent WAL anchor, thread-local connection reuse, client attribution ContextVar
+│   ├── schema.py          # PRAGMA user_version=2 migrations, indexes, Porter FTS5 virtual table
 │   ├── settings.py        # Day-2 runtime settings key-value store (runtime_settings)
 │   ├── scopes.py          # Scope aliasing, normalization, stats, cross-scope migration
 │   ├── memories.py        # AUDN write gate, slot supersession, deprecation, revalidation, TTL pruning
-│   ├── search.py          # FTS5 synonym clusters, query building, weighted BM25 ranking
+│   ├── search.py          # Porter FTS5 sub-token/version matching, synonym clusters, scoped pre-flight quotas
 │   ├── drift.py           # Git anchor file matching, repo path normalization
 │   └── audit.py           # Distillation health scans, slot collision Jaccard analysis, pruning
-├── exporter.py            # Thread-safe Markdown export mirroring & portable tar.gz backup
+├── exporter.py            # Incremental scope Markdown export mirroring & portable tar.gz backup
 ├── onboarding/            # Automated client onboarding, directive templates, and setup scripts
 │   ├── __init__.py        # Re-exports for onboarding package and backward compatibility
 │   ├── client_config.py   # Client registry, MCP paths, snippets, and base URL resolution
