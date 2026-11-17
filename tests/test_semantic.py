@@ -200,4 +200,19 @@ def test_fetch_commit_diff_providers(monkeypatch):
         {"candidates": [{"content": {"parts": [{"text": '```json\n{"ok": true}\n```'}]}}]}
     )
     assert parsed_fenced == {"ok": True}
+    parsed_thought = _extract_gemini_json(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"thought": True, "text": "thinking..."},
+                            {"text": '{"ok": true}'},
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    assert parsed_thought == {"ok": True}
     assert json.dumps(parsed_fenced) == '{"ok": true}'

@@ -292,6 +292,14 @@ async def git_webhook(request: Request) -> JSONResponse:
         bounded_files,
         commit_sha,
     )
+    logger.info(
+        "Webhook processed: provider=%s repo=%s commits=%d files=%d flagged_stale=%d",
+        provider,
+        repo_name,
+        len(commits),
+        len(bounded_files),
+        flagged_count,
+    )
 
     return JSONResponse(
         {
