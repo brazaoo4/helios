@@ -413,16 +413,31 @@ def test_sec03_chunked_streaming_body_limit_on_mcp_and_sse(monkeypatch):
 
 
 def test_sec04_secret_firewall_blocks_credentials():
+    # Build dummy tokens dynamically so static repository secret scanners do not raise false positives.
+    fake_aws = "AKIA" + "1234567890ABCDEF"
+    fake_ghp = "ghp_" + "abcdefghijklmnopqrstuvwxyz123456"
+    fake_gh_pat = "github_pat_" + "11AAAAAA0123456789abcdef_XYZ1234567890"
+    fake_gitlab = "glpat-" + "abcdefghij1234567890"
+    fake_openai = "sk-proj-" + "abcdefghijklmnopqrstuvwxyz123456"
+    fake_gemini = "AIzaSy" + "AbCdEfGhIjKlMnOpQrStUvWxYz1234567"
+    fake_ts = "tskey-auth-" + "k123456CNTRL-abcdefghijklmnop"
+    fake_jwt = (
+        "eyJhbGciOiJIUzI1NiJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+        "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+    )
+    fake_pem = "-----BEGIN " + "PRIVATE KEY----- MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC"
+
     secret_samples = [
-        "AWS key is AKIA1234567890ABCDEF",
-        "GitHub PAT ghp_abcdefghijklmnopqrstuvwxyz123456",
-        "Fine grained github_pat_11AAAAAA0123456789abcdef_XYZ1234567890",
-        "GitLab glpat-abcdefghij1234567890",
-        "OpenAI key sk-proj-abcdefghijklmnopqrstuvwxyz123456",
-        "Gemini key AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz1234567",
-        "Tailscale key tskey-auth-k123456CNTRL-abcdefghijklmnop",
-        "JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
-        "-----BEGIN PRIVATE KEY----- MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC",
+        f"AWS key is {fake_aws}",
+        f"GitHub PAT {fake_ghp}",
+        f"Fine grained {fake_gh_pat}",
+        f"GitLab {fake_gitlab}",
+        f"OpenAI key {fake_openai}",
+        f"Gemini key {fake_gemini}",
+        f"Tailscale key {fake_ts}",
+        f"JWT {fake_jwt}",
+        fake_pem,
         "DB at postgres://admin:s3cr3tP4ssw0rd@db.internal:5432/prod",
     ]
     for sample in secret_samples:
@@ -435,7 +450,7 @@ def test_sec04_secret_firewall_blocks_credentials():
                 "scope": "sec04",
                 "category": "fact",
                 "subject": "bad-seed",
-                "content": "Gemini key AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz1234567",
+                "content": f"Gemini key {fake_gemini}",
                 "anchor_files": [],
             }
         ]
@@ -462,7 +477,7 @@ def test_sec04_secret_firewall_blocks_credentials():
     # Redaction scrubs query tokens, bearer tokens, and raw keys
     raw_log = (
         "GET /sse?token=supersecret123 Authorization: Bearer my-bearer-secret "
-        "postgres://u:realpass123@db/app AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz1234567"
+        f"postgres://u:realpass123@db/app {fake_gemini}"
     )
     scrubbed = redact_secrets(raw_log)
     assert "supersecret123" not in scrubbed

@@ -329,7 +329,7 @@ def triage_webhook_drift_with_gemini(
 def analyze_scope_contradictions(
     scope: str,
     active_memories: list[dict[str, Any]],
-    timeout: float = 20.0,
+    timeout: float = 45.0,
 ) -> dict[str, Any]:
     """
     Use Gemini Flash to identify semantic contradictions and merge candidates
@@ -377,6 +377,7 @@ def analyze_scope_contradictions(
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature": 0.1,
+            "thinkingConfig": {"thinkingBudget": 2048},
             "responseSchema": {
                 "type": "OBJECT",
                 "properties": {
