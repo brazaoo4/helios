@@ -30,6 +30,7 @@ COPY --from=builder --chown=helios:helios /root/.local /home/helios/.local
 ENV PATH=/home/helios/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV MEMORY_DATA_DIR=/data
+ENV FORWARDED_ALLOW_IPS=127.0.0.1
 
 # Create and set permissions on data volume directory
 RUN mkdir -p /data/exports /data/exports/changelog && \
@@ -46,4 +47,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "src.server:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*", "--timeout-graceful-shutdown", "10"]
+CMD ["uvicorn", "src.server:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log", "--timeout-graceful-shutdown", "10"]

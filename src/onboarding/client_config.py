@@ -5,7 +5,7 @@ import sys
 import urllib.parse
 from typing import Any
 
-from src.config import get_public_url
+from src.config import get_allowed_origins, get_public_url, validate_http_url
 
 SUPPORTED_CLIENTS: tuple[str, ...] = (
     "antigravity",
@@ -73,7 +73,28 @@ def resolve_server_base_url(headers: dict[str, str] | None = None) -> str:
         if not host or not re.fullmatch(r"[a-zA-Z0-9._:\[\]-]+", host):
             host = "localhost:8000"
 
-        return f"{proto}://{host}".rstrip("/")
+        candidate = f"{proto}://{host}".rstrip("/")
+        try:
+            validated = validate_http_url(candidate, allow_loopback=True)
+        except ValueError:
+            return "http://localhost:8000"
+
+        allowed = get_allowed_origins()
+        if allowed and "*" not in allowed:
+            allowed_netlocs = {(urllib.parse.urlsplit(o).netloc or o).lower() for o in allowed}
+            allowed_hosts = {
+                (urllib.parse.urlsplit(o).hostname or o.split(":")[0]).lower() for o in allowed
+            }
+            cand_parsed = urllib.parse.urlsplit(validated)
+            cand_host = (cand_parsed.hostname or host.split(":")[0]).lower()
+            if (
+                host.lower() not in allowed_netlocs
+                and cand_host not in allowed_hosts
+                and cand_host not in ("localhost", "127.0.0.1")
+            ):
+                return "http://localhost:8000"
+
+        return validated
 
     return "http://localhost:8000"
 
@@ -181,16 +202,19 @@ def get_mcp_config_snippet(
     """Generate the exact JSON/TOML configuration block or CLI command for the client."""
     c = client.strip().lower()
     clean_base = base_url.rstrip("/")
+    clean_tok = token.strip() if token else ""
     token_suffix = ""
-    if token:
-        clean_tok = token.strip()
+    if clean_tok:
         if clean_tok == "<YOUR_HELIOS_API_KEY>":
             token_suffix = f"?token={clean_tok}"
         else:
             token_suffix = f"?token={urllib.parse.quote(clean_tok, safe='')}"
 
-    mcp_url = f"{clean_base}/mcp{token_suffix}"
-    sse_url = f"{clean_base}/sse{token_suffix}"
+    clean_mcp_url = f"{clean_base}/mcp"
+    clean_sse_url = f"{clean_base}/sse"
+    mcp_url = f"{clean_mcp_url}{token_suffix}"
+    sse_url = f"{clean_sse_url}{token_suffix}"
+    auth_headers = {"Authorization": f"Bearer {clean_tok}"} if clean_tok else None
 
     if c == "antigravity":
         return {
@@ -201,11 +225,12 @@ def get_mcp_config_snippet(
             }
         }
     elif c == "cursor":
+        cursor_entry: dict[str, Any] = {"url": clean_sse_url}
+        if auth_headers:
+            cursor_entry["headers"] = auth_headers
         return {
             "mcpServers": {
-                "helios": {
-                    "url": sse_url,
-                }
+                "helios": cursor_entry,
             }
         }
     elif c == "claude-desktop":
@@ -218,34 +243,40 @@ def get_mcp_config_snippet(
             }
         }
     elif c == "claude-code":
-        return f"claude mcp add --transport sse helios {sse_url}"
+        if clean_tok:
+            return f'claude mcp add --transport sse helios {clean_sse_url} --header "Authorization: Bearer {clean_tok}"'
+        return f"claude mcp add --transport sse helios {clean_sse_url}"
     elif c == "codex":
         return f'[mcp_servers.helios]\nurl = "{mcp_url}"'
     elif c == "windsurf":
+        windsurf_entry: dict[str, Any] = {"serverUrl": clean_mcp_url}
+        if auth_headers:
+            windsurf_entry["headers"] = auth_headers
         return {
             "mcpServers": {
-                "helios": {
-                    "serverUrl": mcp_url,
-                }
+                "helios": windsurf_entry,
             }
         }
     elif c == "vscode":
+        vscode_entry: dict[str, Any] = {"type": "http", "url": clean_mcp_url}
+        if auth_headers:
+            vscode_entry["headers"] = auth_headers
         return {
             "servers": {
-                "helios": {
-                    "type": "http",
-                    "url": mcp_url,
-                }
+                "helios": vscode_entry,
             }
         }
     elif c == "opencode":
+        opencode_entry: dict[str, Any] = {
+            "type": "remote",
+            "url": clean_mcp_url,
+            "enabled": True,
+        }
+        if auth_headers:
+            opencode_entry["headers"] = auth_headers
         return {
             "mcp": {
-                "helios": {
-                    "type": "remote",
-                    "url": mcp_url,
-                    "enabled": True,
-                }
+                "helios": opencode_entry,
             }
         }
     else:

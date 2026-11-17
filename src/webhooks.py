@@ -24,6 +24,7 @@ from src.config import (
     validate_http_url,
 )
 from src.db import get_connection, list_aliases, resolve_scope
+from src.security_gate import redact_secrets
 
 
 def normalize_api_url(provider: str, raw_url: str | None = None) -> str:
@@ -134,7 +135,7 @@ def fetch_candidate_repositories(
     per_page = 100 if p in ("github", "gitlab") else 50
     owner_lower = target_owner.lower()
 
-    while True:
+    while page <= 20:
         if p == "github":
             url = f"{api_url}/user/repos"
             params: dict[str, Any] = {"affiliation": "owner", "per_page": per_page, "page": page}
@@ -230,8 +231,8 @@ def _assert_safe_outbound_url(url: str) -> None:
             in_zero_net = isinstance(v4, ipaddress.IPv4Address) and v4 in ipaddress.ip_network("0.0.0.0/8")
             if ip.is_loopback or v4.is_loopback or ip.is_unspecified or in_zero_net:
                 raise ValueError(f"Destination IP '{ip_str}' is forbidden.")
-    except (socket.gaierror, OSError):
-        pass
+    except (socket.gaierror, OSError) as exc:
+        raise ValueError(f"Unable to resolve destination host '{hostname}'.") from exc
 
 
 def _validate_repo_ident(owner: str, name: str) -> None:
@@ -373,6 +374,8 @@ def enable_repo_webhooks(
     """
     if not repos:
         raise ValueError("No repositories specified to enable.")
+    if len(repos) > 50:
+        raise ValueError("Cannot process more than 50 repositories in a single request.")
 
     prov = (provider or get_git_provider()).strip().lower()
     base_url = normalize_api_url(prov, api_url or get_git_api_url())
@@ -460,9 +463,9 @@ def enable_repo_webhooks(
                 if res.status_code in (200, 201):
                     enabled.append(clean_repo)
                 else:
-                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text[:200]}"})
+                    failed.append({"repo": clean_repo, "error": redact_secrets(f"HTTP {res.status_code}: {res.text[:200]}")})
             except Exception as exc:
-                failed.append({"repo": clean_repo, "error": str(exc)})
+                failed.append({"repo": clean_repo, "error": redact_secrets(str(exc))})
 
     return {
         "enabled": enabled,
@@ -483,6 +486,8 @@ def disable_repo_webhooks(
     """
     if not repos:
         raise ValueError("No repositories specified to disable.")
+    if len(repos) > 50:
+        raise ValueError("Cannot process more than 50 repositories in a single request.")
 
     prov = (provider or get_git_provider()).strip().lower()
     base_url = normalize_api_url(prov, api_url or get_git_api_url())
@@ -535,9 +540,9 @@ def disable_repo_webhooks(
                 if res.status_code in (200, 204):
                     disabled.append(clean_repo)
                 else:
-                    failed.append({"repo": clean_repo, "error": f"HTTP {res.status_code}: {res.text[:200]}"})
+                    failed.append({"repo": clean_repo, "error": redact_secrets(f"HTTP {res.status_code}: {res.text[:200]}")})
             except Exception as exc:
-                failed.append({"repo": clean_repo, "error": str(exc)})
+                failed.append({"repo": clean_repo, "error": redact_secrets(str(exc))})
 
     return {
         "disabled": disabled,

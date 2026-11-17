@@ -1,6 +1,7 @@
 """Core FastMCP memory query and lifecycle tools."""
 
 import json
+import re
 from typing import Annotated, Literal
 
 from pydantic import Field
@@ -21,6 +22,7 @@ from src.db import (
     revalidate_memories as db_revalidate_memories,
 )
 from src.exporter import sync_markdown_exports
+from src.security_gate import redact_secrets
 from src.seed import is_db_empty
 from src.tools.base import ToolAnnotations, mcp
 
@@ -54,6 +56,7 @@ def recall_memories(
         str,
         Field(
             default="",
+            max_length=500,
             description="Natural language search query or keywords to match via FTS5 BM25.",
         ),
     ] = "",
@@ -113,10 +116,15 @@ def recall_memories(
         )
         drift_banner = ""
         if status_filter == "all" and cat_filter is None and not is_db_empty():
-            clean_client_ver = directive_version.strip().lstrip("v")
+            raw_client_ver = directive_version.strip().lstrip("v")
+            if raw_client_ver and not re.fullmatch(r"[0-9A-Za-z._-]{1,24}", raw_client_ver):
+                clean_client_ver = ""
+                ver_label = "invalid/unversioned"
+            else:
+                clean_client_ver = raw_client_ver
+                ver_label = f"v{clean_client_ver}" if clean_client_ver else "unversioned/legacy"
             clean_server_ver = __version__.strip().lstrip("v")
             if clean_client_ver != clean_server_ver:
-                ver_label = f"v{clean_client_ver}" if clean_client_ver else "unversioned/legacy"
                 drift_banner = (
                     f"\n\n> [CLIENT DIRECTIVE DRIFT: Local Helios directives ({ver_label}) are out of sync with "
                     f"Helios Server v{clean_server_ver}. Call get_client_setup_bundle(action='install_or_update') "
@@ -139,9 +147,10 @@ def recall_memories(
             lines.append(
                 f"- `#{m['id']}` ({m['scope']}/{m['category']}) {subj}{m['content']}{stale}{anchor_str}"
             )
-        return "\n".join(lines) + drift_banner
+        enveloped = '<helios_memories trust="data-only">\n' + "\n".join(lines) + "\n</helios_memories>"
+        return enveloped + drift_banner
     except Exception as exc:
-        return f"Error recalling memories: {exc}"
+        return f"Error recalling memories: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -216,7 +225,7 @@ def save_memory(
             return f"No-op: identical memory #{res['id']} already exists in scope '{res['scope']}'."
         return f"Memory #{res['id']} processed ({res['action']})."
     except Exception as exc:
-        return f"Error saving memory: {exc}"
+        return f"Error saving memory: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -253,7 +262,7 @@ def deprecate_memory(
         sync_markdown_exports()
         return f"Memory #{res['id']} in scope '{res['scope']}' deprecated (archived)."
     except Exception as exc:
-        return f"Error deprecating memory: {exc}"
+        return f"Error deprecating memory: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -287,9 +296,9 @@ def recall_history(
     Read-only: resolves scope aliases and returns up to limit (1-25) historical entries ordered by valid_to descending, including validity timestamps and superseding memory IDs.
     Use recall_history for time-travel debugging or reviewing retired facts; use recall_memories instead to search current active or [STALE] memories.
     """
-    resolved = resolve_scope(scope)
     clamped_limit = max(1, min(limit, 25))
     try:
+        resolved = resolve_scope(scope)
         with get_connection() as conn:
             rows = conn.execute(
                 """
@@ -316,9 +325,9 @@ def recall_history(
             lines.append(
                 f"- `#{r['id']}` [{tag}] ({r['valid_from']} to {r['valid_to']}): {subj}{r['content']}"
             )
-        return "\n".join(lines)
+        return '<helios_memories trust="data-only">\n' + "\n".join(lines) + "\n</helios_memories>"
     except Exception as exc:
-        return f"Error retrieving history: {exc}"
+        return f"Error retrieving history: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -359,7 +368,7 @@ def revalidate_memories(
         else:
             return f"No memories revalidated. Provided IDs were not found or not stale: {', '.join(f'#{i}' for i in not_stale)}."
     except Exception as exc:
-        return f"Error revalidating memories: {exc}"
+        return f"Error revalidating memories: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -396,6 +405,8 @@ def distill_memories(
         int,
         Field(
             default=30,
+            ge=1,
+            le=3650,
             description="Minimum age in days for stale memories to be considered for pruning.",
         ),
     ] = 30,
@@ -447,7 +458,7 @@ def distill_memories(
                     f"DRY RUN (no changes applied):\n"
                     f"- Expired episodic memories to archive: {cnt_ep}\n"
                     f"- Stale memories older than {stale_age_days} days to archive: {cnt_st}\n\n"
-                    f"To execute permanent archival, run: `distill_memories(scope='{scope}', action='prune', dry_run=False)`."
+                    f"To execute permanent archival, run: `distill_memories(scope={scope!r}, action='prune', dry_run=False)`."
                 )
             res = db_prune_memories(raw_scope=scope, prune_stale=True, stale_age_days=stale_age_days)
             sync_markdown_exports()
@@ -477,7 +488,7 @@ def distill_memories(
                     "Suggested consolidation action:",
                     "```python",
                     f"# Save consolidated fact superseding #{m1['id']}, then deprecate #{m2['id']}",
-                    f"save_memory(scope='{col['scope']}', subject='{m1['subject']}', content='<CONSOLIDATED_FACT_<=25_WORDS>', replaces_id={m1['id']})",
+                    f"save_memory(scope={col['scope']!r}, subject={m1['subject']!r}, content='<CONSOLIDATED_FACT_<=25_WORDS>', replaces_id={m1['id']})",
                     f"deprecate_memory(memory_id={m2['id']}, reason='Consolidated into #{m1['id']}')",
                     "```\n",
                 ])
@@ -486,7 +497,7 @@ def distill_memories(
         else:
             return f"Invalid action '{action}'. Must be 'audit', 'prune', or 'suggest'."
     except Exception as exc:
-        return f"Error distilling memories: {exc}"
+        return f"Error distilling memories: {redact_secrets(str(exc))}"
 
 
 __all__ = [

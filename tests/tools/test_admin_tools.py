@@ -19,7 +19,7 @@ def test_manage_git_webhooks_tool_validation(monkeypatch):
 
     # Set minimal webhook config to test action routing
     monkeypatch.setenv("HELIOS_GIT_TOKEN", "mock-token-xyz")
-    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "http://localhost:8000/webhook/git")
+    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "https://helios.example.com/webhook/git")
 
     # 2. Invalid action
     res_inv = manage_git_webhooks(action="invalid_action")

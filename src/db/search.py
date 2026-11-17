@@ -83,6 +83,9 @@ def query_memories(
     - Supports status_filter ('all' -> active & stale, 'active' -> active only, 'stale' -> stale only).
     - Increments hit_count and updates last_accessed for returned rows (except for administrative 'stale' audits).
     """
+    if len(query) > 500:
+        raise ValueError("Search query cannot exceed 500 characters.")
+
     prune_expired_episodic()
 
     limit = max(1, min(limit, 50))

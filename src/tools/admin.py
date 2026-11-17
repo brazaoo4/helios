@@ -10,6 +10,7 @@ from src import webhooks as _webhooks_mod
 from src.config import get_git_token, get_webhook_url
 from src.exporter import create_portable_archive
 from src.onboarding import generate_client_bundle, resolve_server_base_url
+from src.security_gate import redact_secrets
 from src.tools.base import ToolAnnotations, mcp
 
 
@@ -39,7 +40,7 @@ def export_bundle() -> str:
         size_kb = round(os.path.getsize(archive_path) / 1024, 2)
         return f"Snapshot created: {archive_path} ({size_kb} KB)."
     except Exception as exc:
-        return f"Error generating export bundle: {exc}"
+        return f"Error generating export bundle: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(
@@ -179,7 +180,7 @@ def manage_git_webhooks(
         else:
             return f"Invalid action '{action}'. Must be 'list', 'enable', or 'disable'."
     except Exception as exc:
-        return f"Error managing git webhooks: {exc}"
+        return f"Error managing git webhooks: {redact_secrets(str(exc))}"
 
 
 @mcp.tool(

@@ -100,6 +100,8 @@ def sync_markdown_exports() -> list[str]:
             ]
 
             for scope in scopes:
+                if len(scope) > 64:
+                    continue
                 safe_name = sanitize_filename(scope)
 
                 # --- 1. Active & Stale State File ---

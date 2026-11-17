@@ -39,7 +39,7 @@ def test_export_endpoints_edge_cases(monkeypatch, tmp_path):
     monkeypatch.setattr(exp_mod, "get_export_dir", lambda: non_existent)
     assert exp_mod._scan_markdown_exports() == []
 
-    # 2. Bundle generation error returns 500
+    # 2. Bundle generation error returns 500 without leaking raw details in open mode
     def _broken_bundle():
         raise RuntimeError("Disk full")
 
@@ -47,5 +47,15 @@ def test_export_endpoints_edge_cases(monkeypatch, tmp_path):
     with TestClient(app) as client:
         res = client.get("/export/bundle")
         assert res.status_code == 500
-        assert "Disk full" in res.json()["message"]
+        assert res.json()["message"] == "Failed to generate bundle."
+
+    # 3. Authenticated request with HELIOS_API_KEY set includes redacted error detail
+    monkeypatch.setenv("HELIOS_API_KEY", "export-secret-123")
+    with TestClient(app) as client:
+        res_auth = client.get(
+            "/export/bundle",
+            headers={"Authorization": "Bearer export-secret-123"},
+        )
+        assert res_auth.status_code == 500
+        assert "Disk full" in res_auth.json()["message"]
 

@@ -25,7 +25,8 @@ The codebase is organized into focused, single-responsibility packages following
 ```text
 src/
 ├── server.py              # Composition root (< 130 lines) & backward-compatible re-exports
-├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
+│   ├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
+│   ├── security_gate.py       # AUDN secret firewall, injection-marker blocker, log/error redaction
 ├── db/                    # Modular SQLite Database Engine
 │   ├── __init__.py        # Re-exports complete engine contract with __all__ (100% backward compatible)
 │   ├── connection.py      # Connection factory, WAL pragmas, DB path resolution, timestamps
@@ -73,7 +74,8 @@ src/
 | Module / Package | Primary Responsibility |
 | :--- | :--- |
 | **`src/server.py`** | **Composition Root**: Assembles Starlette routes, registers ASGI middleware, initializes lifespan, and preserves public API backward compatibility via `__all__`. |
-| **`src/middleware/auth.py`** | **Zero-Trust Security**: Pure ASGI middleware enforcing constant-time token verification (`Authorization: Bearer` or `?token=`) while exempting public endpoints (`/health`, `/setup*`, `/webhook/*`). Enforces 1MB streaming body caps (`_read_bounded_body`). |
+| **`src/middleware/auth.py`** | **Zero-Trust Security**: Pure ASGI middleware enforcing constant-time token verification (`Authorization: Bearer` or `?token=`), strict browser `Origin` allowlisting (`403` on untrusted origins), and streaming 1MB payload caps (`413` including chunked POSTs) across `/mcp`, `/sse`, `/messages`, and `/export/*`. |
+| **`src/security_gate.py`** | **AUDN Secret Firewall & Envelope Hardening**: Blocks high-signal API keys/tokens, credentialed URIs, and reserved Helios markers (`<!-- HELIOS:`, `<helios_memories>`) on write, while redacting sensitive tokens from error strings; tools wrap recalled records in `<helios_memories trust="data-only">`. |
 | **`src/middleware/transport.py`** | **Protocol Multiplexing**: Dispatches `/sse` and `/mcp` requests to FastMCP's Streamable HTTP session manager or Server-Sent Events transport, gracefully falling back to standard SSE when stale session IDs are presented. |
 | **`src/middleware/lifespan.py`** | **Lifecycle Management**: Runs on server boot to initialize SQLite WAL, ingest declarative `seed.yaml` / `seed.json` files, run auto-seeding if enabled, and initialize FastMCP's background session runner. |
 | **`src/routes/`** | **HTTP Ingress**: REST route handlers exposing health checks, automated onboarding runbooks, Markdown export catalogs, snapshot downloads, and multi-provider Git push webhooks. |

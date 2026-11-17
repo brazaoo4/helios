@@ -14,6 +14,7 @@ from src.config import get_episodic_ttl_days, get_word_limit
 from src.db.connection import get_connection, get_db_path, now_iso
 from src.db.drift import _normalize_repo_path
 from src.db.scopes import resolve_scope
+from src.security_gate import assert_no_secrets_or_injection
 
 
 def prune_expired_episodic() -> int:
@@ -98,6 +99,8 @@ def upsert_memory(
     subject_clean = " ".join(unicodedata.normalize("NFKC", subject).strip().lower().split())
     if len(subject_clean) > 80 or any(ch in subject_clean for ch in ("[", "]", "`", "\n", "\r")):
         raise ValueError("Subject must be <= 80 characters and must not contain brackets, backticks, or newlines.")
+
+    assert_no_secrets_or_injection(content_clean, subject_clean)
 
     raw_anchors = anchor_files or []
     if len(raw_anchors) > 25:
@@ -224,6 +227,17 @@ def deprecate_memory(memory_id: int, reason: str = "") -> dict[str, Any]:
     AUDN Deprecate Gate:
     Retires an active or stale memory into 'archived' status with valid_to stamped.
     """
+    norm_reason = unicodedata.normalize("NFKC", reason or "")
+    norm_reason = "".join(
+        " " if (unicodedata.category(ch) in ("Cf", "Cc") or ch in ("\u2800", "\u3164")) else ch
+        for ch in norm_reason
+    )
+    clean_reason = " ".join(norm_reason.strip().split())
+    if len(clean_reason) > 200:
+        raise ValueError("Deprecation reason cannot exceed 200 characters.")
+    if clean_reason:
+        assert_no_secrets_or_injection(clean_reason)
+
     ts = now_iso()
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -235,7 +249,7 @@ def deprecate_memory(memory_id: int, reason: str = "") -> dict[str, Any]:
         if not row:
             raise ValueError(f"Memory #{memory_id} does not exist or is already inactive.")
 
-        stale_reason = reason.strip() if reason.strip() else "deprecated by user/agent"
+        stale_reason = clean_reason if clean_reason else "deprecated by user/agent"
         conn.execute(
             "UPDATE memories SET status = 'archived', valid_to = ?, stale_reason = ? WHERE id = ?",
             (ts, stale_reason, memory_id),
@@ -259,6 +273,8 @@ def revalidate_memories(memory_ids: list[int]) -> dict[str, Any]:
     """
     if not memory_ids:
         return {"revalidated_ids": [], "not_found_or_not_stale_ids": []}
+    if len(memory_ids) > 100:
+        raise ValueError("Cannot revalidate more than 100 memory IDs in a single batch.")
 
     unique_ids = list(dict.fromkeys(memory_ids))
     ts = now_iso()

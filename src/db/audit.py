@@ -14,6 +14,16 @@ from src.db.connection import get_connection, get_db_path, now_iso
 from src.db.scopes import resolve_scope
 
 
+def _validate_stale_age_days(stale_age_days: int) -> None:
+    if (
+        not isinstance(stale_age_days, int)
+        or isinstance(stale_age_days, bool)
+        or stale_age_days < 1
+        or stale_age_days > 3650
+    ):
+        raise ValueError("stale_age_days must be between 1 and 3650.")
+
+
 def db_audit_memories(
     raw_scope: str = "global",
     stale_age_days: int = 30,
@@ -27,6 +37,7 @@ def db_audit_memories(
     - cold memories (0 hits, unaccessed > 30 days)
     - candidate slot collisions / near-duplicates within the scope
     """
+    _validate_stale_age_days(stale_age_days)
     if not get_db_path().exists():
         return {
             "scope": raw_scope,
@@ -190,6 +201,7 @@ def db_prune_memories(
     """
     Prune (archive) expired episodic memories and optionally old unreviewed stale memories.
     """
+    _validate_stale_age_days(stale_age_days)
     if not get_db_path().exists():
         return {"scope": raw_scope, "pruned_episodic": 0, "pruned_stale": 0, "archived_ids": []}
 

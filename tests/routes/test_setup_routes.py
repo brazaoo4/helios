@@ -44,14 +44,21 @@ def test_http_setup_endpoint_with_auth_and_no_leak(monkeypatch):
         assert "<YOUR_HELIOS_API_KEY>" in content
         assert "Authentication Required" in content
 
-        # 2. When query param ?token= supplied by user, it is safely rendered in snippets
+        # 2. Invalid ?token= is rejected with 401
+        res_bad_token = client.get(
+            "/setup?token=wrong-token",
+            headers={"Host": "helios.example.com", "X-Forwarded-Proto": "https"},
+        )
+        assert res_bad_token.status_code == 401
+
+        # 3. When matching ?token= supplied by authenticated user, it is rendered in snippets
         res_with_token = client.get(
-            "/setup?token=user-client-token-abc",
+            "/setup?token=super-secret-production-token-999",
             headers={"Host": "helios.example.com", "X-Forwarded-Proto": "https"},
         )
         assert res_with_token.status_code == 200
-        assert "user-client-token-abc" in res_with_token.text
-        assert "https://helios.example.com/mcp?token=user-client-token-abc" in res_with_token.text
+        assert "super-secret-production-token-999" in res_with_token.text
+        assert "https://helios.example.com/mcp?token=super-secret-production-token-999" in res_with_token.text
 
 
 def test_http_setup_powershell_and_bash_endpoints(monkeypatch):
@@ -71,13 +78,13 @@ def test_http_setup_powershell_and_bash_endpoints(monkeypatch):
         assert "<!-- HELIOS:START -->" in ps1_text
         assert "super-secret-auth-key-123" not in ps1_text
 
-        # 2. PowerShell script with user token query param
+        # 2. PowerShell script with authenticated user token query param
         res_ps1_token = client.get(
-            "/setup.ps1?token=client-token-xyz",
+            "/setup.ps1?token=super-secret-auth-key-123",
             headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "helios.mesh.net"},
         )
         assert res_ps1_token.status_code == 200
-        assert "https://helios.mesh.net/mcp?token=client-token-xyz" in res_ps1_token.text
+        assert "https://helios.mesh.net/mcp?token=super-secret-auth-key-123" in res_ps1_token.text
 
         # 3. Bash setup script endpoint (exempt from AuthGate)
         res_sh = client.get(
