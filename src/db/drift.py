@@ -6,12 +6,15 @@ to flag affected active memories as stale.
 """
 
 import json
+import logging
 import re
 from typing import Any
 
 from src.config import get_gemini_api_key, get_git_token
 from src.db.connection import get_connection, now_iso
 from src.db.scopes import resolve_scope
+
+logger = logging.getLogger("helios.drift")
 
 
 def _normalize_repo_path(path: str) -> str:
@@ -103,6 +106,16 @@ def flag_stale_by_files(
                 for item, mfile in matched_pairs
             ]
             decisions = triage_webhook_drift_with_gemini(resolved_diff, candidates, short_sha)
+            if decisions is not None:
+                kept = sum(1 for d in decisions.values() if d.get("status") == "UNCHANGED")
+                stale = len(decisions) - kept
+                logger.info(
+                    "Gemini drift triage for %s (%s): kept=%d stale=%d",
+                    repo_name,
+                    short_sha,
+                    kept,
+                    stale,
+                )
 
     flagged_count = 0
     ts_now = now_iso()

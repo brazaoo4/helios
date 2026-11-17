@@ -400,9 +400,18 @@ def analyze_scope_contradictions(
             )
         parsed = _extract_gemini_json(res.json()) or {}
 
+    contradictions = parsed.get("contradictions") if isinstance(parsed.get("contradictions"), list) else []
+    merges = parsed.get("merge_candidates") if isinstance(parsed.get("merge_candidates"), list) else []
+    logger.info(
+        "Gemini contradiction audit for scope=%s: memories=%d contradictions=%d merges=%d",
+        scope,
+        len(items),
+        len(contradictions),
+        len(merges),
+    )
     return {
-        "contradictions": parsed.get("contradictions") if isinstance(parsed.get("contradictions"), list) else [],
-        "merge_candidates": parsed.get("merge_candidates") if isinstance(parsed.get("merge_candidates"), list) else [],
+        "contradictions": contradictions,
+        "merge_candidates": merges,
     }
 
 

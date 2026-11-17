@@ -33,6 +33,8 @@ def isolated_helios_env(tmp_path, monkeypatch):
     monkeypatch.delenv("HELIOS_CORS_ORIGINS", raising=False)
     monkeypatch.delenv("HELIOS_GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("HELIOS_SEMANTIC_SEARCH", raising=False)
+    monkeypatch.delenv("HELIOS_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("HELIOS_LOG_FORMAT", raising=False)
 
     def _test_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         host_str = (host.decode("utf-8") if isinstance(host, bytes) else str(host)).lower()

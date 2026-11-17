@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import logging
+import time
 from typing import Any
 
 import anyio
@@ -11,8 +12,10 @@ from starlette.responses import JSONResponse
 
 from src.config import get_allowed_origins, get_api_key
 from src.db.connection import reset_client_id, set_client_id
+from src.logging_config import sanitize_log_path
 
 logger = logging.getLogger("helios.auth")
+access_logger = logging.getLogger("helios.access")
 
 MAX_WEBHOOK_BYTES = 1_048_576
 
@@ -110,122 +113,166 @@ class AuthGateMiddleware:
             return await self.app(scope, receive, send)
 
         path = request.url.path
-        if path in ("/mcp", "/sse", "/messages") or path.startswith("/messages/") or path.startswith("/export/"):
-            origin = request.headers.get("origin", "").strip()
-            if origin and not _is_origin_allowed(origin):
-                logger.warning("Rejected %s %s due to untrusted Origin header: %s", request.method, path, origin)
-                response = JSONResponse(
-                    {"status": "error", "message": "Forbidden: untrusted Origin header."},
-                    status_code=403,
+        start_t = time.monotonic()
+        status_code = 500
+        client_label = (
+            request.headers.get("x-helios-client", "").strip()
+            or (request.client.host if request.client else "-")
+        )
+
+        async def logging_send(message: dict[str, Any]) -> None:
+            nonlocal status_code
+            if message.get("type") == "http.response.start":
+                status_code = int(message.get("status", 200))
+            await send(message)
+
+        try:
+            if path in ("/mcp", "/sse", "/messages") or path.startswith("/messages/") or path.startswith("/export/"):
+                origin = request.headers.get("origin", "").strip()
+                if origin and not _is_origin_allowed(origin):
+                    logger.warning("Rejected %s %s due to untrusted Origin header: %s", request.method, path, origin)
+                    response = JSONResponse(
+                        {"status": "error", "message": "Forbidden: untrusted Origin header."},
+                        status_code=403,
+                    )
+                    return await response(scope, receive, logging_send)
+
+            if request.method == "GET" and (
+                path == "/health"
+                or path
+                in (
+                    "/setup",
+                    "/setup.ps1",
+                    "/setup.sh",
+                    "/uninstall",
+                    "/uninstall.ps1",
+                    "/uninstall.sh",
                 )
-                return await response(scope, receive, send)
+            ):
+                return await self.app(scope, receive, logging_send)
 
-        if request.method == "GET" and (
-            path == "/health"
-            or path
-            in (
-                "/setup",
-                "/setup.ps1",
-                "/setup.sh",
-                "/uninstall",
-                "/uninstall.ps1",
-                "/uninstall.sh",
+            is_body_method = request.method in ("POST", "PUT", "PATCH")
+            # Enforce payload limit on body-bearing requests
+            if is_body_method:
+                content_length = request.headers.get("content-length")
+                if content_length is not None:
+                    try:
+                        parsed_len = int(content_length)
+                    except ValueError:
+                        response = JSONResponse(
+                            {"status": "error", "message": "Invalid Content-Length header."},
+                            status_code=400,
+                        )
+                        return await response(scope, receive, logging_send)
+                    if parsed_len < 0:
+                        response = JSONResponse(
+                            {"status": "error", "message": "Invalid Content-Length header."},
+                            status_code=400,
+                        )
+                        return await response(scope, receive, logging_send)
+                    if parsed_len > MAX_WEBHOOK_BYTES:
+                        logger.warning("Rejected %s %s with Content-Length %d (> 1MB)", request.method, path, parsed_len)
+                        response = JSONResponse(
+                            {"status": "error", "message": "Payload exceeds 1MB limit."},
+                            status_code=413,
+                        )
+                        return await response(scope, receive, logging_send)
+
+            is_webhook_route = request.method == "POST" and path in (
+                "/webhook/git",
+                "/webhook/forgejo",
+                "/hooks/git-commit",
             )
-        ):
-            return await self.app(scope, receive, send)
+            if not is_webhook_route and not is_request_authenticated(request):
+                logger.warning("Rejected unauthenticated %s %s", request.method, path)
+                response = JSONResponse(
+                    {
+                        "status": "error",
+                        "message": "Unauthorized: missing or invalid API key.",
+                    },
+                    status_code=401,
+                )
+                return await response(scope, receive, logging_send)
 
-        is_body_method = request.method in ("POST", "PUT", "PATCH")
-        # Enforce payload limit on body-bearing requests
-        if is_body_method:
-            content_length = request.headers.get("content-length")
-            if content_length is not None:
+            client_token = set_client_id(request.headers.get("x-helios-client", ""))
+            try:
+                if not is_body_method:
+                    return await self.app(scope, receive, logging_send)
+
+                bytes_received = 0
+                limit_exceeded = False
+                response_started = False
+
+                async def bounded_receive() -> dict[str, Any]:
+                    nonlocal bytes_received, limit_exceeded
+                    message = await receive()
+                    if message.get("type") == "http.request":
+                        body = message.get("body", b"")
+                        bytes_received += len(body)
+                        if bytes_received > MAX_WEBHOOK_BYTES:
+                            limit_exceeded = True
+                            raise _PayloadTooLargeError()
+                    return message
+
+                async def guarded_send(message: dict[str, Any]) -> None:
+                    nonlocal response_started
+                    if limit_exceeded:
+                        return
+                    if message.get("type") == "http.response.start":
+                        response_started = True
+                    await logging_send(message)
+
                 try:
-                    parsed_len = int(content_length)
-                except ValueError:
-                    response = JSONResponse(
-                        {"status": "error", "message": "Invalid Content-Length header."},
-                        status_code=400,
-                    )
-                    return await response(scope, receive, send)
-                if parsed_len < 0:
-                    response = JSONResponse(
-                        {"status": "error", "message": "Invalid Content-Length header."},
-                        status_code=400,
-                    )
-                    return await response(scope, receive, send)
-                if parsed_len > MAX_WEBHOOK_BYTES:
-                    logger.warning("Rejected %s %s with Content-Length %d (> 1MB)", request.method, path, parsed_len)
+                    await self.app(scope, bounded_receive, guarded_send)
+                except _PayloadTooLargeError:
+                    pass
+                except BaseException as exc:
+                    if not limit_exceeded:
+                        raise
+                    if isinstance(exc, BaseExceptionGroup):
+                        _, rest = exc.split(_PayloadTooLargeError)
+                        if rest is not None:
+                            raise rest
+
+                if limit_exceeded and not response_started:
+                    logger.warning("Rejected streamed %s %s exceeding 1MB cap (%d bytes)", request.method, path, bytes_received)
                     response = JSONResponse(
                         {"status": "error", "message": "Payload exceeds 1MB limit."},
                         status_code=413,
                     )
-                    return await response(scope, receive, send)
-
-        is_webhook_route = request.method == "POST" and path in (
-            "/webhook/git",
-            "/webhook/forgejo",
-            "/hooks/git-commit",
-        )
-        if not is_webhook_route and not is_request_authenticated(request):
-            logger.warning("Rejected unauthenticated %s %s", request.method, path)
-            response = JSONResponse(
-                {
-                    "status": "error",
-                    "message": "Unauthorized: missing or invalid API key.",
-                },
-                status_code=401,
-            )
-            return await response(scope, receive, send)
-
-        client_token = set_client_id(request.headers.get("x-helios-client", ""))
-        try:
-            if not is_body_method:
-                return await self.app(scope, receive, send)
-
-            bytes_received = 0
-            limit_exceeded = False
-            response_started = False
-
-            async def bounded_receive() -> dict[str, Any]:
-                nonlocal bytes_received, limit_exceeded
-                message = await receive()
-                if message.get("type") == "http.request":
-                    body = message.get("body", b"")
-                    bytes_received += len(body)
-                    if bytes_received > MAX_WEBHOOK_BYTES:
-                        limit_exceeded = True
-                        raise _PayloadTooLargeError()
-                return message
-
-            async def guarded_send(message: dict[str, Any]) -> None:
-                nonlocal response_started
-                if limit_exceeded:
-                    return
-                if message.get("type") == "http.response.start":
-                    response_started = True
-                await send(message)
-
-            try:
-                await self.app(scope, bounded_receive, guarded_send)
-            except _PayloadTooLargeError:
-                pass
-            except BaseException as exc:
-                if not limit_exceeded:
-                    raise
-                if isinstance(exc, BaseExceptionGroup):
-                    _, rest = exc.split(_PayloadTooLargeError)
-                    if rest is not None:
-                        raise rest
-
-            if limit_exceeded and not response_started:
-                logger.warning("Rejected streamed %s %s exceeding 1MB cap (%d bytes)", request.method, path, bytes_received)
-                response = JSONResponse(
-                    {"status": "error", "message": "Payload exceeds 1MB limit."},
-                    status_code=413,
-                )
-                return await response(scope, receive, send)
+                    return await response(scope, receive, logging_send)
+            finally:
+                reset_client_id(client_token)
         finally:
-            reset_client_id(client_token)
+            duration_ms = (time.monotonic() - start_t) * 1000.0
+            safe_target = sanitize_log_path(path, scope.get("query_string", b""))
+            if path == "/health" and status_code < 400:
+                access_logger.debug(
+                    "%s %s -> %d (%.1fms, client=%s)",
+                    request.method,
+                    safe_target,
+                    status_code,
+                    duration_ms,
+                    client_label,
+                )
+            elif status_code >= 400:
+                access_logger.warning(
+                    "%s %s -> %d (%.1fms, client=%s)",
+                    request.method,
+                    safe_target,
+                    status_code,
+                    duration_ms,
+                    client_label,
+                )
+            else:
+                access_logger.info(
+                    "%s %s -> %d (%.1fms, client=%s)",
+                    request.method,
+                    safe_target,
+                    status_code,
+                    duration_ms,
+                    client_label,
+                )
 
 
 __all__ = [
