@@ -25,8 +25,8 @@ logger = logging.getLogger("helios.semantic")
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMS = 256
-TRIAGE_MODEL = "gemini-2.5-flash-lite"
-AUDITOR_MODEL = "gemini-2.5-flash"
+TRIAGE_MODEL = "gemini-flash-lite-latest"
+AUDITOR_MODEL = "gemini-flash-latest"
 
 _GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 _CAT_TIE_BOOST = {"rule": 0.0015, "fact": 0.001, "preference": 0.0005, "episodic": 0.0}
@@ -216,9 +216,14 @@ def _extract_gemini_json(data: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(candidates, list) or not candidates:
         return None
     parts = ((candidates[0].get("content") or {}).get("parts")) or []
-    if not parts or not isinstance(parts[0], dict):
-        return None
-    raw_text = str(parts[0].get("text") or "").strip()
+    raw_text = ""
+    for part in parts:
+        if not isinstance(part, dict) or part.get("thought") is True:
+            continue
+        candidate_text = str(part.get("text") or "").strip()
+        if candidate_text:
+            raw_text = candidate_text
+            break
     if not raw_text:
         return None
     if raw_text.startswith("```"):
@@ -324,7 +329,7 @@ def triage_webhook_drift_with_gemini(
 def analyze_scope_contradictions(
     scope: str,
     active_memories: list[dict[str, Any]],
-    timeout: float = 8.0,
+    timeout: float = 20.0,
 ) -> dict[str, Any]:
     """
     Use Gemini Flash to identify semantic contradictions and merge candidates
