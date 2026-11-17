@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.11.1](https://github.com/brazaoo4/helios/compare/v1.11.0...v1.11.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **semantic:** cap contradiction audit thinkingBudget=2048 & cleanup compose/tests ([59bf76e](https://github.com/brazaoo4/helios/commit/59bf76ec07970dcab405019c399f1d8c823d78af))
+* **semantic:** cap contradiction audit thinkingBudget=2048 & cleanup compose/tests ([6ddcbbb](https://github.com/brazaoo4/helios/commit/6ddcbbb2b44549ba6c657e83a1d96bccc417bb94))
+
 ## [1.11.0](https://github.com/brazaoo4/helios/compare/v1.10.0...v1.11.0) (2026-11-17)
 
 
