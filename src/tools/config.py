@@ -9,6 +9,7 @@ from src.config import (
     MUTABLE_SETTINGS,
     get_allowed_origins,
     get_api_key,
+    get_gemini_api_key,
     get_memory_data_dir,
     get_webhook_secret,
     resolve_setting_with_source,
@@ -181,6 +182,9 @@ def manage_server_config(
         hook_secret_status = (
             "enabled (configured via env)" if get_webhook_secret() else "disabled"
         )
+        gemini_key_status = (
+            "enabled (configured via env)" if get_gemini_api_key() else "disabled"
+        )
         origins_str = ", ".join(get_allowed_origins())
 
         lines.extend(
@@ -189,6 +193,7 @@ def manage_server_config(
                 "### Security Environment Status (Read-Only via env)",
                 f"- `HELIOS_API_KEY`: {api_key_status}",
                 f"- `HELIOS_WEBHOOK_SECRET`: {hook_secret_status}",
+                f"- `HELIOS_GEMINI_API_KEY`: {gemini_key_status}",
                 f"- `HELIOS_ALLOWED_ORIGINS`: `{origins_str}`",
                 f"- `MEMORY_DATA_DIR`: `{get_memory_data_dir()}`",
             ]

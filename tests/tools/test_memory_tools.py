@@ -377,3 +377,65 @@ def test_recall_word_budget_packing_and_history_reason():
     assert "_(by: laptop-opencode)_" in hist
 
 
+def test_distill_memories_contradictions_action(monkeypatch):
+    import json
+    from unittest.mock import patch
+
+    save_memory(scope="contra-app", category="fact", subject="proxy", content="Uses Traefik v3 for ingress")
+    save_memory(scope="contra-app", category="fact", subject="tls", content="Nginx Proxy Manager handles all TLS")
+
+    # 1. Unconfigured key returns fallback guidance
+    unconf = distill_memories(scope="contra-app", action="contradictions")
+    assert "requires `HELIOS_GEMINI_API_KEY`" in unconf
+
+    # 2. Configured key with mocked Gemini response
+    monkeypatch.setenv("HELIOS_GEMINI_API_KEY", "fake-gemini-key")
+
+    def mock_post(self, url, **kwargs):
+        class MockResp:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "contradictions": [
+                                                    {
+                                                        "id1": 1,
+                                                        "id2": 2,
+                                                        "summary": "Conflicting reverse proxy engines",
+                                                        "consolidated_content": "Nginx Proxy Manager handles all ingress and TLS.",
+                                                    }
+                                                ],
+                                                "merge_candidates": [],
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+
+        return MockResp()
+
+    with patch("httpx.Client.post", new=mock_post):
+        out = distill_memories(scope="contra-app", action="contradictions")
+        assert "Semantic Contradiction & Consolidation Audit" in out
+        assert "Conflicting reverse proxy engines" in out
+        assert "save_memory(" in out
+        assert "deprecate_memory(" in out
+
+        out_all = distill_memories(scope="all", action="contradictions")
+        assert "Semantic Contradiction & Consolidation Audit (`all`)" in out_all
+
+    few = distill_memories(scope="single-item-scope", action="contradictions")
+    assert "Not enough active memories" in few
+
+

@@ -157,3 +157,28 @@ def test_helper_getters(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMORY_DATA_DIR", str(tmp_path / "custom_data"))
     data_dir = get_memory_data_dir()
     assert data_dir == tmp_path / "custom_data"
+
+
+def test_gemini_and_boolean_settings(monkeypatch):
+    from src import config as cfg
+
+    assert cfg.HELIOS_GEMINI_API_KEY is None
+    assert cfg.get_semantic_search_enabled() is False
+
+    with pytest.raises(ValueError, match="locked"):
+        validate_setting_value("HELIOS_GEMINI_API_KEY", "test-key")
+
+    assert validate_setting_value("HELIOS_SEMANTIC_SEARCH", "true") is True
+    assert validate_setting_value("HELIOS_SEMANTIC_SEARCH", "false") is False
+    assert validate_setting_value("HELIOS_SEMANTIC_SEARCH", True) is True
+    with pytest.raises(ValueError, match="must be a boolean"):
+        validate_setting_value("HELIOS_SEMANTIC_SEARCH", "maybe")
+    with pytest.raises(ValueError, match="must be a boolean"):
+        validate_setting_value("HELIOS_SEMANTIC_SEARCH", None)
+
+    monkeypatch.setenv("HELIOS_GEMINI_API_KEY", "gemini-key-for-test")
+    assert cfg.HELIOS_GEMINI_API_KEY == "gemini-key-for-test"
+    assert cfg.get_semantic_search_enabled() is True
+
+    monkeypatch.setenv("HELIOS_SEMANTIC_SEARCH", "0")
+    assert cfg.get_semantic_search_enabled() is False

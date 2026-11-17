@@ -850,7 +850,7 @@ def test_preflight_recall_scope_quota_prevents_global_starvation():
 def test_fts5_porter_version_and_subtoken_matching():
     with get_connection() as conn:
         user_ver = conn.execute("PRAGMA user_version;").fetchone()[0]
-        assert user_ver == 2
+        assert user_ver == 3
 
     upsert_memory(
         "fts-pro",

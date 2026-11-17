@@ -185,3 +185,105 @@ def test_webhook_signature_helpers():
     assert not verify_github_signature(body, "badprefix", secret)
     assert verify_github_signature(body, f"sha256={expected}", secret)
 
+
+def test_webhook_gemini_diff_triage_keeps_unchanged_active_and_flags_contradicted(monkeypatch):
+    from unittest.mock import patch
+
+    import httpx
+
+    monkeypatch.setenv("HELIOS_WEBHOOK_SECRET", "triage-hook-secret")
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "forgejo")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://git.internal.lan")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "fake-git-pat")
+
+    save_memory(
+        scope="triage-app",
+        category="fact",
+        content="App listens on port 8000",
+        subject="app-port",
+        anchor_files=["compose.yaml"],
+    )
+    save_memory(
+        scope="triage-app",
+        category="fact",
+        content="Database uses PostgreSQL 16",
+        subject="db-ver",
+        anchor_files=["compose.yaml"],
+    )
+
+    monkeypatch.setenv("HELIOS_GEMINI_API_KEY", "fake-gemini-key")
+    sample_diff = "diff --git a/compose.yaml b/compose.yaml\n-      - 8000:8000\n+      - 8080:8000\n"
+
+    def gemini_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": json.dumps(
+                                        {
+                                            "decisions": [
+                                                {
+                                                    "id": 1,
+                                                    "status": "STALE",
+                                                    "reason": "Port changed from 8000 to 8080",
+                                                },
+                                                {
+                                                    "id": 2,
+                                                    "status": "UNCHANGED",
+                                                    "reason": "PostgreSQL image unchanged",
+                                                },
+                                            ]
+                                        }
+                                    )
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(gemini_handler)
+    orig_client = httpx.Client
+
+    def semantic_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return orig_client(*args, **kwargs)
+
+    payload = {
+        "repository": {"name": "braz/triage-app"},
+        "commits": [{"id": "a1b2c3d4e5", "modified": ["compose.yaml"]}],
+        "after": "a1b2c3d4e5",
+    }
+    raw_bytes = json.dumps(payload).encode("utf-8")
+    sig = hmac.new(b"triage-hook-secret", msg=raw_bytes, digestmod=hashlib.sha256).hexdigest()
+
+    with (
+        patch("src.webhooks.fetch_commit_diff", return_value=sample_diff),
+        patch("src.semantic.httpx.Client", side_effect=semantic_client),
+        TestClient(app) as client,
+    ):
+        res = client.post(
+            "/webhook/git",
+            content=raw_bytes,
+            headers={"X-Forgejo-Signature": sig, "X-Forgejo-Event": "push"},
+        )
+        assert res.status_code == 200
+        assert res.json()["memories_flagged_stale"] == 1
+
+    from src.db import get_connection
+
+    with get_connection() as conn:
+        row1 = conn.execute("SELECT status, stale_reason FROM memories WHERE id = 1").fetchone()
+        row2 = conn.execute(
+            "SELECT status, last_verified_commit FROM memories WHERE id = 2"
+        ).fetchone()
+        assert row1["status"] == "stale"
+        assert row1["stale_reason"] == "Port changed from 8000 to 8080 (a1b2c3d)"
+        assert row2["status"] == "active"
+        assert row2["last_verified_commit"] == "a1b2c3d"
+

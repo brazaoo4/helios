@@ -110,6 +110,12 @@ services:
       - HELIOS_GIT_TOKEN=        # PAT with repo/webhook permissions
       - HELIOS_GIT_OWNER=        # Optional username/org filter
       - HELIOS_WEBHOOK_URL=      # e.g., https://helios.example.com/webhook/git
+
+      # ========================================================================
+      # 5. OPTIONAL: GEMINI AI FEATURES (Semantic Search, Diff Triage, Audits)
+      # ========================================================================
+      - HELIOS_GEMINI_API_KEY=   # Optional; leave empty for 100% local FTS5 mode
+      - HELIOS_SEMANTIC_SEARCH=true
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 30s
@@ -424,7 +430,7 @@ Helios exposes 11 FastMCP tools with strict Pydantic field descriptions, worker-
 | `revalidate_memories` | `memory_ids` | Batch-restore `[STALE]` memories back to active after verifying file changes. |
 | `deprecate_memory` | `memory_id`, `reason` | Retire/archive an obsolete memory and log the reason in the scope's changelog. |
 | `recall_history` | `scope`, `limit` | Inspect superseded and archived records for time-travel debugging. |
-| `distill_memories` | `scope`, `action`, `dry_run`, `stale_age_days` | Audit memory hygiene, detect slot collisions/near-duplicates, and prune expired episodic or abandoned stale notes. |
+| `distill_memories` | `scope`, `action`, `dry_run`, `stale_age_days` | Audit memory hygiene, detect slot collisions or semantic contradictions (`action='contradictions'`), and prune expired/stale notes. |
 | `manage_scope_alias` | `alias`, `canonical_scope`, `action` | Manage aliases (`set`, `remove`, `list` with active/stale counts) or migrate scopes (`rename`). |
 | `manage_server_config` | `action`, `key`, `value` | View or modify runtime settings live (`list`, `set`, `reset`) with automatic secret redaction. |
 | `manage_git_webhooks` | `action`, `repos`, `include_forks` | Interactively list owned repos and enable/disable drift webhooks on GitHub, Forgejo, Gitea, or GitLab. |
@@ -511,7 +517,7 @@ export_bundle() -> str
 # 11. Audit memory health and prune obsolete facts
 distill_memories(
     scope: str = "global",
-    action: Literal["audit", "prune", "suggest"] = "audit",
+    action: Literal["audit", "prune", "suggest", "contradictions"] = "audit",
     dry_run: bool = True,
     stale_age_days: int = 30,
 ) -> str

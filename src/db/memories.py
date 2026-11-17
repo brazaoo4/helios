@@ -162,69 +162,76 @@ def upsert_memory(
                 tuple(params),
             )
             action = "superseded" if superseded_ids else "no-op (verified existing)"
-            return {
+            result: dict[str, Any] = {
                 "action": action,
                 "id": existing["id"],
                 "scope": scope,
                 "superseded_ids": superseded_ids,
             }
-
-        # 2. Validate explicit replaces_id (if supplied)
-        if replaces_id is not None:
-            old_rec = conn.execute(
-                "SELECT id, scope FROM memories WHERE id = ? AND valid_to IS NULL",
-                (replaces_id,),
-            ).fetchone()
-            if not old_rec:
-                raise ValueError(f"replaces_id {replaces_id} does not exist or is already superseded.")
-            if resolve_scope(old_rec["scope"], conn=conn) != scope:
-                raise ValueError(
-                    f"Cannot supersede memory across different scopes ('{old_rec['scope']}' -> '{scope}')."
-                )
-
-        # 3. Insert New Memory Row
-        cur = conn.execute(
-            """
-            INSERT INTO memories (
-                scope, category, subject, content, status, anchor_files, valid_from, last_accessed, updated_by
-            ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
-            """,
-            (scope, category, subject_clean, content_clean, anchors_json, ts, ts, author),
-        )
-        new_id = cur.lastrowid
-        superseded_ids = []
-
-        # 4. Retire explicit replaces_id
-        if replaces_id is not None:
-            conn.execute(
-                "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
-                (ts, new_id, replaces_id),
-            )
-            superseded_ids.append(replaces_id)
-
-        # 5. Slot Supersession: Retire older active rows in the same (scope, subject) slot
-        if subject_clean:
-            old_slots = conn.execute(
-                """
-                SELECT id FROM memories
-                WHERE scope = ? AND subject = ? AND id != ? AND valid_to IS NULL
-                """,
-                (scope, subject_clean, new_id),
-            ).fetchall()
-            for row in old_slots:
-                if row["id"] not in superseded_ids:
-                    conn.execute(
-                        "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
-                        (ts, new_id, row["id"]),
+        else:
+            # 2. Validate explicit replaces_id (if supplied)
+            if replaces_id is not None:
+                old_rec = conn.execute(
+                    "SELECT id, scope FROM memories WHERE id = ? AND valid_to IS NULL",
+                    (replaces_id,),
+                ).fetchone()
+                if not old_rec:
+                    raise ValueError(f"replaces_id {replaces_id} does not exist or is already superseded.")
+                if resolve_scope(old_rec["scope"], conn=conn) != scope:
+                    raise ValueError(
+                        f"Cannot supersede memory across different scopes ('{old_rec['scope']}' -> '{scope}')."
                     )
-                    superseded_ids.append(row["id"])
 
-        return {
-            "action": "superseded" if superseded_ids else "created",
-            "id": new_id,
-            "scope": scope,
-            "superseded_ids": superseded_ids,
-        }
+            # 3. Insert New Memory Row
+            cur = conn.execute(
+                """
+                INSERT INTO memories (
+                    scope, category, subject, content, status, anchor_files, valid_from, last_accessed, updated_by
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                """,
+                (scope, category, subject_clean, content_clean, anchors_json, ts, ts, author),
+            )
+            new_id = cur.lastrowid
+            superseded_ids = []
+
+            # 4. Retire explicit replaces_id
+            if replaces_id is not None:
+                conn.execute(
+                    "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
+                    (ts, new_id, replaces_id),
+                )
+                superseded_ids.append(replaces_id)
+
+            # 5. Slot Supersession: Retire older active rows in the same (scope, subject) slot
+            if subject_clean:
+                old_slots = conn.execute(
+                    """
+                    SELECT id FROM memories
+                    WHERE scope = ? AND subject = ? AND id != ? AND valid_to IS NULL
+                    """,
+                    (scope, subject_clean, new_id),
+                ).fetchall()
+                for row in old_slots:
+                    if row["id"] not in superseded_ids:
+                        conn.execute(
+                            "UPDATE memories SET status = 'superseded', valid_to = ?, superseded_by = ? WHERE id = ?",
+                            (ts, new_id, row["id"]),
+                        )
+                        superseded_ids.append(row["id"])
+
+            result = {
+                "action": "superseded" if superseded_ids else "created",
+                "id": new_id,
+                "scope": scope,
+                "superseded_ids": superseded_ids,
+            }
+
+    if result["action"] in ("created", "superseded"):
+        from src.semantic import upsert_memory_embedding
+
+        upsert_memory_embedding(result["id"], result["scope"], subject_clean, content_clean)
+
+    return result
 
 
 def deprecate_memory(memory_id: int, reason: str = "") -> dict[str, Any]:

@@ -27,10 +27,11 @@ src/
 ├── server.py              # Composition root (< 160 lines) & backward-compatible re-exports
 ├── config.py              # 3-tier layered settings engine (SQLite > Environment > Defaults)
 ├── security_gate.py       # AUDN secret firewall, injection-marker blocker, log/error redaction
+├── semantic.py            # Optional Gemini 256-d Matryoshka RRF search, diff triage, and contradiction auditor
 ├── db/                    # Modular SQLite Database Engine
 │   ├── __init__.py        # Re-exports complete engine contract with __all__ (100% backward compatible)
 │   ├── connection.py      # Persistent WAL anchor, thread-local connection reuse, client attribution ContextVar
-│   ├── schema.py          # PRAGMA user_version=2 migrations, indexes, Porter FTS5 virtual table
+│   ├── schema.py          # PRAGMA user_version=3 migrations, indexes, Porter FTS5 & memory_embeddings tables
 │   ├── settings.py        # Day-2 runtime settings key-value store (runtime_settings)
 │   ├── scopes.py          # Scope aliasing, normalization, stats, cross-scope migration
 │   ├── memories.py        # AUDN write gate, slot supersession, deprecation, revalidation, TTL pruning

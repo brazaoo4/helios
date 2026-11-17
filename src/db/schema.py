@@ -59,7 +59,8 @@ def init_db() -> None:
                 valid_to TEXT DEFAULT NULL,
                 last_accessed TEXT NOT NULL,
                 hit_count INTEGER NOT NULL DEFAULT 0,
-                updated_by TEXT DEFAULT ''
+                updated_by TEXT DEFAULT '',
+                last_verified_commit TEXT DEFAULT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_memories_active
@@ -84,6 +85,13 @@ def init_db() -> None:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                memory_id INTEGER PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+                model TEXT NOT NULL,
+                dims INTEGER NOT NULL,
+                vec BLOB NOT NULL
+            );
             """
         )
 
@@ -95,6 +103,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE memories ADD COLUMN stale_since TEXT DEFAULT NULL;")
         if "updated_by" not in existing_cols:
             conn.execute("ALTER TABLE memories ADD COLUMN updated_by TEXT DEFAULT '';")
+        if "last_verified_commit" not in existing_cols:
+            conn.execute("ALTER TABLE memories ADD COLUMN last_verified_commit TEXT DEFAULT NULL;")
 
         user_version = conn.execute("PRAGMA user_version;").fetchone()[0]
         if user_version < 2:
@@ -106,8 +116,10 @@ def init_db() -> None:
                 DROP TABLE IF EXISTS memories_fts;
                 {_FTS_CREATE_SQL}
                 INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
-                PRAGMA user_version = 2;
                 """
             )
         else:
             conn.executescript(_FTS_CREATE_SQL)
+
+        if user_version < 3:
+            conn.execute("PRAGMA user_version = 3;")
