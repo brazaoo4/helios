@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from src import __version__
+from src.config import get_gemini_api_key
 from src.db import (
     db_audit_memories,
     db_prune_memories,
@@ -24,6 +25,7 @@ from src.db import (
 from src.exporter import sync_markdown_exports
 from src.security_gate import redact_secrets
 from src.seed import is_db_empty
+from src.semantic import analyze_scope_contradictions
 from src.tools.base import ToolAnnotations, mcp
 
 COLD_START_ONBOARDING_NOTICE = (
@@ -415,10 +417,10 @@ def distill_memories(
         ),
     ] = "global",
     action: Annotated[
-        Literal["audit", "prune", "suggest"],
+        Literal["audit", "prune", "suggest", "contradictions"],
         Field(
             default="audit",
-            description="Action to perform: 'audit' (read-only health scan), 'prune' (archive expired/stale memories), or 'suggest' (recommend deduplication consolidations).",
+            description="Action to perform: 'audit' (health scan), 'prune' (archive expired/stale), 'suggest' (dedup), or 'contradictions' (Gemini semantic conflict audit).",
         ),
     ] = "audit",
     dry_run: Annotated[
@@ -439,8 +441,8 @@ def distill_memories(
     ] = 30,
 ) -> str:
     """
-    Audit scope memory health, suggest duplicate slot consolidations, or prune expired episodic and abandoned stale records.
-    action='audit' (default) and action='suggest' are read-only diagnostics; action='prune' archives expired episodic notes and stale memories older than stale_age_days, but is gated by dry_run=True by default (set dry_run=False to commit changes and sync Markdown exports).
+    Audit scope memory health, suggest duplicate slot consolidations, find semantic contradictions, or prune expired episodic and abandoned stale records.
+    action='audit' (default), 'suggest', and 'contradictions' (requires HELIOS_GEMINI_API_KEY) are read-only diagnostics; action='prune' archives expired episodic notes and stale memories older than stale_age_days, but is gated by dry_run=True by default (set dry_run=False to commit changes and sync Markdown exports).
     Use distill_memories for periodic scope-wide hygiene; use deprecate_memory to retire a single obsolete memory ID, or save_memory with replaces_id to apply consolidation suggestions.
     """
     try:
@@ -521,8 +523,73 @@ def distill_memories(
                 ])
             return "\n".join(lines)
 
+        elif act == "contradictions":
+            if not get_gemini_api_key():
+                return (
+                    "Semantic contradiction auditing requires `HELIOS_GEMINI_API_KEY` to be configured on the server. "
+                    "Use `distill_memories(scope=..., action='suggest')` for local Jaccard duplicate detection."
+                )
+            all_scopes_mode = scope.strip().lower() in ("all", "*", "")
+            with get_connection() as conn:
+                if all_scopes_mode:
+                    target_label = "all"
+                    rows = conn.execute(
+                        """
+                        SELECT id, scope, category, subject, content
+                        FROM memories
+                        WHERE status = 'active' AND valid_to IS NULL
+                        ORDER BY scope, id
+                        """
+                    ).fetchall()
+                else:
+                    target_label = resolve_scope(scope, conn=conn)
+                    rows = conn.execute(
+                        """
+                        SELECT id, scope, category, subject, content
+                        FROM memories
+                        WHERE scope = ? AND status = 'active' AND valid_to IS NULL
+                        ORDER BY id
+                        """,
+                        (target_label,),
+                    ).fetchall()
+
+            active_mems = [dict(r) for r in rows]
+            if len(active_mems) < 2:
+                return f"Not enough active memories in scope '{target_label}' to audit for contradictions."
+
+            analysis = analyze_scope_contradictions(target_label, active_mems)
+            contradictions = analysis.get("contradictions", [])
+            merges = analysis.get("merge_candidates", [])
+            if not contradictions and not merges:
+                return f"No semantic contradictions or merge candidates detected in scope '{target_label}'."
+
+            mem_by_id = {m["id"]: m for m in active_mems}
+            lines = [f"### Semantic Contradiction & Consolidation Audit (`{target_label}`)\n"]
+
+            for heading, items in (
+                ("#### Contradictions", contradictions),
+                ("#### Merge Candidates", merges),
+            ):
+                if not items:
+                    continue
+                lines.append(heading)
+                for idx, pair in enumerate(items, 1):
+                    id1 = int(pair["id1"])
+                    id2 = int(pair["id2"])
+                    m1 = mem_by_id.get(id1, {"scope": target_label, "subject": "", "content": ""})
+                    m2 = mem_by_id.get(id2, {"scope": target_label, "subject": "", "content": ""})
+                    lines.extend([
+                        f"{idx}. `#{id1}` [{m1['subject']}] vs `#{id2}` [{m2['subject']}]: {pair.get('summary', '')}",
+                        "```python",
+                        f"save_memory(scope={m1['scope']!r}, subject={m1['subject']!r}, content={pair.get('consolidated_content', '')!r}, replaces_id={id1})",
+                        f"deprecate_memory(memory_id={id2}, reason='Consolidated with #{id1}')",
+                        "```",
+                    ])
+                lines.append("")
+            return "\n".join(lines).strip()
+
         else:
-            return f"Invalid action '{action}'. Must be 'audit', 'prune', or 'suggest'."
+            return f"Invalid action '{action}'. Must be 'audit', 'prune', 'suggest', or 'contradictions'."
     except Exception as exc:
         return f"Error distilling memories: {redact_secrets(str(exc))}"
 

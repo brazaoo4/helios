@@ -7,6 +7,7 @@ webhook lifecycle management across Forgejo, Gitea, GitHub, and GitLab.
 
 import ipaddress
 import os
+import re
 import socket
 import urllib.parse
 from typing import Any
@@ -549,3 +550,100 @@ def disable_repo_webhooks(
         "not_found": not_found,
         "failed": failed,
     }
+
+
+def _filter_diff_for_files(diff_text: str, matched_files: list[str] | None) -> str:
+    """Filter a unified git diff down to hunks touching matched_files and cap at 16KB."""
+    if not matched_files or "diff --git " not in diff_text:
+        return diff_text[:16384]
+
+    targets = [f.replace("\\", "/").strip("/") for f in matched_files if f and f.strip()]
+    sections = diff_text.split("diff --git ")
+    kept: list[str] = []
+    for sec in sections:
+        if not sec.strip():
+            continue
+        first_line = sec.splitlines()[0]
+        if any(t in first_line for t in targets):
+            kept.append("diff --git " + sec)
+    joined = "".join(kept) if kept else diff_text
+    return joined[:16384]
+
+
+def fetch_commit_diff(
+    repo_name: str,
+    commit_sha: str,
+    matched_files: list[str] | None = None,
+    provider: str | None = None,
+    api_url: str | None = None,
+    token: str | None = None,
+) -> str | None:
+    """
+    Fetch commit diff hunks from the configured Git provider API (fail-open).
+    Supports GitHub, Forgejo/Gitea, and GitLab, capped at 16KB.
+    """
+    clean_sha = re.sub(r"[^a-zA-Z0-9._-]", "", commit_sha or "")
+    if not clean_sha or clean_sha == "latest" or clean_sha == "0" * 40:
+        return None
+
+    prov = (provider or get_git_provider()).strip().lower()
+    raw_api = (api_url or get_git_api_url()).strip()
+    auth_token = token or get_git_token()
+    if not prov or not auth_token:
+        return None
+    if prov not in ("github", "gitlab") and not raw_api:
+        return None
+
+    try:
+        base_url = normalize_api_url(prov, raw_api)
+        _assert_safe_outbound_url(base_url)
+        _verify_token_destination_allowed(base_url, explicit_token=token)
+
+        headers = get_headers(prov, auth_token)
+        clean_repo = repo_name.strip()
+        with httpx.Client(headers=headers, timeout=8.0) as client:
+            if "/" in clean_repo:
+                owner, name = clean_repo.split("/", 1)
+            else:
+                owner = (get_git_owner() or _get_authenticated_user(client, prov, base_url)).strip()
+                name = clean_repo
+                clean_repo = f"{owner}/{name}" if owner else name
+
+            _validate_repo_ident(owner, name)
+            enc_sha = urllib.parse.quote(clean_sha, safe="")
+
+            if prov == "github":
+                enc_owner = urllib.parse.quote(owner, safe="")
+                enc_name = urllib.parse.quote(name, safe="")
+                endpoint = f"{base_url}/repos/{enc_owner}/{enc_name}/commits/{enc_sha}"
+                res = client.get(endpoint, headers={"Accept": "application/vnd.github.v3.diff"})
+                if res.status_code != 200:
+                    return None
+                return _filter_diff_for_files(res.text, matched_files)
+            elif prov == "gitlab":
+                encoded = urllib.parse.quote(clean_repo, safe="")
+                endpoint = f"{base_url}/projects/{encoded}/repository/commits/{enc_sha}/diff"
+                res = client.get(endpoint)
+                if res.status_code != 200:
+                    return None
+                diffs = res.json()
+                if not isinstance(diffs, list):
+                    return None
+                formatted = []
+                for entry in diffs:
+                    if not isinstance(entry, dict):
+                        continue
+                    path = entry.get("new_path") or entry.get("old_path") or ""
+                    body = entry.get("diff") or ""
+                    formatted.append(f"diff --git a/{path} b/{path}\n{body}\n")
+                return _filter_diff_for_files("".join(formatted), matched_files)
+            else:  # forgejo, gitea
+                enc_owner = urllib.parse.quote(owner, safe="")
+                enc_name = urllib.parse.quote(name, safe="")
+                endpoint = f"{base_url}/repos/{enc_owner}/{enc_name}/git/commits/{enc_sha}.diff"
+                res = client.get(endpoint)
+                if res.status_code != 200:
+                    return None
+                return _filter_diff_for_files(res.text, matched_files)
+    except Exception:
+        return None

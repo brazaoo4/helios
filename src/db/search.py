@@ -11,6 +11,7 @@ import re
 import sqlite3
 from typing import Any
 
+from src.config import get_semantic_search_enabled
 from src.db.connection import get_connection, now_iso
 from src.db.memories import prune_expired_episodic
 from src.db.scopes import resolve_scope
@@ -201,38 +202,56 @@ def query_memories(
                 if filtered:
                     clean_tokens = filtered
 
-            if not clean_tokens:
+            if not clean_tokens and not re.search(r"\w", query):
                 return []
 
-            fts_query = build_fts5_query(clean_tokens)
-            if not fts_query:
-                return []
+            lexical_results: list[dict[str, Any]] = []
+            fts_query = build_fts5_query(clean_tokens) if clean_tokens else ""
+            if fts_query:
+                try:
+                    rows = conn.execute(
+                        f"""
+                        SELECT m.id, m.scope, m.category, m.subject, m.content,
+                               m.status, m.stale_reason, m.anchor_files
+                        FROM memories_fts f
+                        JOIN memories m ON f.rowid = m.id
+                        WHERE m.scope IN ({placeholders})
+                          AND {status_clause_m}
+                          AND m.valid_to IS NULL
+                          {cat_clause_m}
+                          AND memories_fts MATCH ?
+                        ORDER BY
+                            (bm25(memories_fts, 5.0, 10.0, 1.0)
+                             - CASE WHEN m.status = 'active' THEN 0.5 ELSE 0.0 END
+                             - CASE m.category WHEN 'rule' THEN 0.3 WHEN 'fact' THEN 0.2 WHEN 'preference' THEN 0.1 ELSE 0.0 END),
+                            m.hit_count DESC
+                        LIMIT ?
+                        """,
+                        (*scopes, *cat_params, fts_query, limit),
+                    ).fetchall()
+                    lexical_results = [dict(r) for r in rows]
+                except sqlite3.OperationalError as exc:
+                    logger.warning("FTS5 MATCH query failed (%s): %s", exc, fts_query)
+                    lexical_results = []
 
-            try:
-                rows = conn.execute(
-                    f"""
-                    SELECT m.id, m.scope, m.category, m.subject, m.content,
-                           m.status, m.stale_reason, m.anchor_files
-                    FROM memories_fts f
-                    JOIN memories m ON f.rowid = m.id
-                    WHERE m.scope IN ({placeholders})
-                      AND {status_clause_m}
-                      AND m.valid_to IS NULL
-                      {cat_clause_m}
-                      AND memories_fts MATCH ?
-                    ORDER BY
-                        (bm25(memories_fts, 5.0, 10.0, 1.0)
-                         - CASE WHEN m.status = 'active' THEN 0.5 ELSE 0.0 END
-                         - CASE m.category WHEN 'rule' THEN 0.3 WHEN 'fact' THEN 0.2 WHEN 'preference' THEN 0.1 ELSE 0.0 END),
-                        m.hit_count DESC
-                    LIMIT ?
-                    """,
-                    (*scopes, *cat_params, fts_query, limit),
-                ).fetchall()
-                results = [dict(r) for r in rows]
-            except sqlite3.OperationalError as exc:
-                logger.warning("FTS5 MATCH query failed (%s): %s", exc, fts_query)
-                return []
+            if get_semantic_search_enabled():
+                from src.semantic import reciprocal_rank_fusion, semantic_search_memories
+
+                semantic_results = semantic_search_memories(
+                    conn,
+                    scopes,
+                    query,
+                    status_clause_m,
+                    cat_clause_m,
+                    cat_params,
+                    limit=max(limit * 2, 16),
+                )
+                if semantic_results:
+                    results = reciprocal_rank_fusion(lexical_results, semantic_results, limit=limit)
+                else:
+                    results = lexical_results
+            else:
+                results = lexical_results
         else:
             order_sql = """
                 ORDER BY

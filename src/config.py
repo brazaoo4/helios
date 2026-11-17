@@ -12,6 +12,7 @@ LOCKED_SECURITY_KEYS: set[str] = {
     "HELIOS_REQUIRE_WEBHOOK_SECRET",
     "WEBHOOK_SECRET",
     "HELIOS_CORS_ORIGINS",
+    "HELIOS_GEMINI_API_KEY",
 }
 
 MUTABLE_SETTINGS: dict[str, dict[str, Any]] = {
@@ -75,6 +76,12 @@ MUTABLE_SETTINGS: dict[str, dict[str, Any]] = {
         "default": "",
         "sensitive": False,
         "description": "Target URL registered on Git providers (e.g. https://helios.example.com/webhook/git).",
+    },
+    "HELIOS_SEMANTIC_SEARCH": {
+        "type": bool,
+        "default": True,
+        "sensitive": False,
+        "description": "Enable hybrid Gemini semantic vector search when HELIOS_GEMINI_API_KEY is set.",
     },
 }
 
@@ -142,6 +149,20 @@ def _get_setting_from_db(key: str) -> str | None:
         return None
 
 
+def _parse_bool_setting(key: str, raw_value: Any) -> bool:
+    """Parse boolean setting values strictly."""
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None:
+        raise ValueError(f"{key} must be a boolean ('true' or 'false').")
+    norm = str(raw_value).strip().lower()
+    if norm in ("true", "1", "yes", "on"):
+        return True
+    if norm in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(f"{key} must be a boolean ('true' or 'false'), got '{raw_value}'.")
+
+
 def validate_setting_value(key: str, raw_value: Any) -> Any:
     """Validate a setting value against allowed types, ranges, and choices."""
     if key in LOCKED_SECURITY_KEYS:
@@ -150,6 +171,9 @@ def validate_setting_value(key: str, raw_value: Any) -> Any:
     meta = MUTABLE_SETTINGS.get(key)
     if not meta:
         raise KeyError(f"Unknown setting '{key}'.")
+
+    if meta["type"] is bool:
+        return _parse_bool_setting(key, raw_value)
 
     if meta["type"] is int:
         raw_str = str(raw_value).strip()
@@ -204,6 +228,8 @@ def resolve_setting_with_source(key: str) -> tuple[Any, str]:
     # 2. Check environment variable
     env_raw = os.getenv(key)
     if env_raw is not None and env_raw.strip():
+        if meta["type"] is bool:
+            return _parse_bool_setting(key, env_raw), "env"
         if meta["type"] is int:
             try:
                 int_val = int(env_raw.strip())
@@ -264,6 +290,22 @@ def get_allowed_origins() -> list[str]:
     if raw is None:
         raw = os.getenv("HELIOS_CORS_ORIGINS", "")
     return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def get_gemini_api_key() -> str | None:
+    """Resolve HELIOS_GEMINI_API_KEY dynamically (default: None). Environment-only."""
+    val = os.getenv("HELIOS_GEMINI_API_KEY")
+    if val is None or not val.strip():
+        return None
+    return val.strip()
+
+
+def get_semantic_search_enabled() -> bool:
+    """Return True when HELIOS_SEMANTIC_SEARCH is enabled and HELIOS_GEMINI_API_KEY is configured."""
+    if get_gemini_api_key() is None:
+        return False
+    val, _ = resolve_setting_with_source("HELIOS_SEMANTIC_SEARCH")
+    return bool(val)
 
 
 # --- Layered Getters (SQLite -> Environment -> Default) ---
@@ -336,6 +378,8 @@ def __getattr__(name: str):
         return get_allowed_origins()
     if name == "HELIOS_PUBLIC_URL":
         return get_public_url()
+    if name == "HELIOS_GEMINI_API_KEY":
+        return get_gemini_api_key()
     if name in MUTABLE_SETTINGS:
         val, _ = resolve_setting_with_source(name)
         return val
