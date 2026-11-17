@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.8](https://github.com/brazaoo4/helios/compare/v1.8.7...v1.8.8) (2026-11-17)
+
+
+### Bug Fixes
+
+* **security:** enforce origin allowlist, streaming body cap, secret firewall, and parameter bounds ([f6cef1f](https://github.com/brazaoo4/helios/commit/f6cef1fa3b6a3ecf286129a0fe0dd9e01d489c15))
+* **security:** Phase 1 security hardening (SEC-01 to SEC-11 & Feature 4) ([3e71df0](https://github.com/brazaoo4/helios/commit/3e71df0b43460a26eac5dc175148b118d884538d))
+
 ## [1.8.7](https://github.com/brazaoo4/helios/compare/v1.8.6...v1.8.7) (2026-11-13)
 
 
