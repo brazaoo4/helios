@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.11.0](https://github.com/brazaoo4/helios/compare/v1.10.0...v1.11.0) (2026-11-17)
+
+
+### Features
+
+* **logging:** add structured redacting logging and HTTP access logs ([5228137](https://github.com/brazaoo4/helios/commit/52281370f52d66487f7953a3a97932182598f5ad))
+
+
+### Bug Fixes
+
+* **semantic:** switch deprecated gemini-2.5-flash models to gemini-flash-latest aliases ([7863ed3](https://github.com/brazaoo4/helios/commit/7863ed3d4ad1a05c370f2babb5ecf50f2fc149c3))
+* **semantic:** use latest Gemini aliases & add structured redacting logging ([0aab632](https://github.com/brazaoo4/helios/commit/0aab632b9403260d0d292fd30435d997db04abcb))
+
 ## [1.10.0](https://github.com/brazaoo4/helios/compare/v1.9.0...v1.10.0) (2026-11-17)
 
 
