@@ -216,3 +216,47 @@ def test_fetch_commit_diff_providers(monkeypatch):
     )
     assert parsed_thought == {"ok": True}
     assert json.dumps(parsed_fenced) == '{"ok": true}'
+
+
+def test_analyze_scope_contradictions_sets_thinking_budget_and_timeout(monkeypatch):
+    """Contradiction auditor bounds thinkingBudget=2048 and raises default HTTP timeout to >=45s."""
+    monkeypatch.setenv("HELIOS_GEMINI_API_KEY", "fake-gemini-key")
+    captured: dict = {}
+    orig_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": json.dumps({"contradictions": [], "merge_candidates": []})}
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    def custom_client(*args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        kwargs["transport"] = transport
+        return orig_client(*args, **kwargs)
+
+    with patch("src.semantic.httpx.Client", side_effect=custom_client):
+        result = analyze_scope_contradictions(
+            "demo",
+            [
+                {"id": 1, "scope": "demo", "category": "fact", "content": "One"},
+                {"id": 2, "scope": "demo", "category": "fact", "content": "Two"},
+            ],
+        )
+
+    assert result == {"contradictions": [], "merge_candidates": []}
+    assert captured["timeout"] >= 45.0
+    assert captured["json"]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 2048}
