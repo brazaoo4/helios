@@ -894,3 +894,172 @@ def test_sqlite_wal_concurrent_readers_and_writers():
         assert count == 19
 
 
+def test_schema_migration_upgrades_legacy_v0_database(tmp_path, monkeypatch):
+    import sqlite3
+
+    legacy_dir = tmp_path / "legacy-v0"
+    legacy_dir.mkdir()
+    monkeypatch.setenv("MEMORY_DATA_DIR", str(legacy_dir))
+    db_file = legacy_dir / "memory.db"
+
+    conn = sqlite3.connect(db_file)
+    conn.executescript(
+        """
+        CREATE TABLE memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            category TEXT NOT NULL,
+            subject TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            stale_reason TEXT DEFAULT '',
+            anchor_files TEXT DEFAULT '[]',
+            superseded_by INTEGER,
+            valid_from TEXT NOT NULL,
+            valid_to TEXT DEFAULT NULL,
+            last_accessed TEXT NOT NULL,
+            hit_count INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO memories (scope, category, subject, content, valid_from, last_accessed)
+        VALUES ('legacy', 'fact', 'port', 'Legacy PostgreSQL database runs on port 5432', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+        PRAGMA user_version = 0;
+        """
+    )
+    conn.close()
+
+    init_db()
+    with get_connection() as upgraded:
+        cols = {row["name"] for row in upgraded.execute("PRAGMA table_info(memories);").fetchall()}
+        assert {"stale_since", "updated_by", "last_verified_commit"}.issubset(cols)
+        assert upgraded.execute("PRAGMA user_version;").fetchone()[0] == 3
+
+    recalled = query_memories("legacy", "databases")
+    assert len(recalled) == 1
+    assert recalled[0]["subject"] == "port"
+
+
+def test_connection_pool_inode_rotation_lru_eviction_and_rollback(tmp_path, monkeypatch):
+    from src.db.connection import _MAX_CACHED_PATHS, close_all_connections, get_db_path
+
+    # 1. Explicit transaction rollback on unhandled exception
+    with pytest.raises(RuntimeError, match="abort tx"):
+        with get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """
+                INSERT INTO memories (scope, category, subject, content, valid_from, last_accessed)
+                VALUES ('rollback', 'fact', 'tx', 'Should not persist', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+                """
+            )
+            raise RuntimeError("abort tx")
+    assert query_memories("rollback", "persist") == []
+
+    # 2. Replacing DB file inode rotates cached anchor & thread connection safely
+    upsert_memory("rot", "fact", "Before file replacement", subject="inode")
+    close_all_connections()
+    db_file = get_db_path()
+    # Reopen once to populate anchor/cache, then replace the inode
+    assert len(query_memories("rot", "replacement")) == 1
+    db_file.unlink()
+    init_db()
+    assert query_memories("rot", "replacement") == []
+
+    # 3. Cycling across > _MAX_CACHED_PATHS directories exercises LRU anchor/bag eviction
+    for idx in range(_MAX_CACHED_PATHS + 3):
+        sub_dir = tmp_path / f"pool-{idx}"
+        monkeypatch.setenv("MEMORY_DATA_DIR", str(sub_dir))
+        init_db()
+        res = upsert_memory("pool", "fact", f"Pooled directory index {idx}", subject="dir")
+        assert res["scope"] == "pool"
+
+
+def test_scope_aliases_chaining_migration_validation_and_error_guards(tmp_path, monkeypatch):
+    import sqlite3
+    from unittest.mock import patch
+
+    # Empty / nonexistent DB guards
+    fresh_dir = tmp_path / "no-db-yet"
+    fresh_dir.mkdir()
+    monkeypatch.setenv("MEMORY_DATA_DIR", str(fresh_dir))
+    assert list_aliases() == {}
+    assert resolve_scope("my-repo") == "my-repo"
+    assert resolve_scope("...") == "global"
+    assert remove_alias("   ") is False
+
+    # Initialize fresh DB and test alias flattening + repointing + remove
+    init_db()
+    set_alias("svc-old", "svc-mid")
+    set_alias("svc-mid", "svc-canon")
+    # Alias chaining flattens/repoints cleanly: svc-old -> svc-canon, and inserting svc-v1 -> svc-mid flattens to svc-canon
+    set_alias("svc-v1", "svc-mid")
+    aliases = list_aliases()
+    assert aliases["svc-old"] == "svc-canon"
+    assert aliases["svc-v1"] == "svc-canon"
+
+    with pytest.raises(ValueError, match="cannot be identical"):
+        set_alias("svc-mid", "svc-mid")
+
+    assert remove_alias("svc-v1") is True
+    assert remove_alias("nonexistent-alias") is False
+
+    # Migration error guards when target alias resolves back to source or global
+    with pytest.raises(ValueError, match="cannot be identical"):
+        migrate_scope("svc-canon", "svc-old", register_alias=False)
+    set_alias("alias-to-global-like", "target-scope")
+    set_alias("to-a", "global-dest")
+    assert migrate_scope("src-x", "to-a", register_alias=True)["to_scope"] == "global-dest"
+
+    # Corrupt/unreachable DB fallback paths return safe defaults
+    with patch("src.db.scopes.get_connection", side_effect=sqlite3.OperationalError("locked")):
+        assert list_aliases() == {}
+        assert resolve_scope("fallback-repo") == "fallback-repo"
+
+
+def test_search_plural_synonyms_sparse_global_backfill_and_fts_error_resilience():
+    import sqlite3
+    from unittest.mock import patch
+
+    from src.db.search import build_fts5_query
+
+    # 1. Singularization branches (-ies, -es) and 1-char digits vs 1-char letters
+    q_ies = build_fts5_query(["repositories", "addresses", "3", "a"])
+    assert '"git"' in q_ies
+    assert '"cidr"' in q_ies
+    assert '"3"' in q_ies
+    assert '"a"' not in q_ies
+
+    # 2. When global has fewer rows than remaining quota, backfill remaining slots from scope_rows
+    for i in range(6):
+        upsert_memory("dense-scope", "fact", f"Dense project item number {i}", subject=f"item-{i}")
+    upsert_memory("global", "rule", "Single global rule")
+
+    results = query_memories("dense-scope", "", include_global=True, limit=6)
+    assert len(results) == 6
+    assert sum(1 for r in results if r["scope"] == "dense-scope") == 5
+    assert sum(1 for r in results if r["scope"] == "global") == 1
+
+    # 3. FTS5 OperationalError fails safely instead of crashing
+    class EmptyCursor:
+        def fetchone(self):
+            return None
+
+        def fetchall(self):
+            return []
+
+    class FailingFTSConn:
+        def execute(self, sql, params=()):
+            if "MATCH" in sql:
+                raise sqlite3.OperationalError("malformed fts query")
+            return EmptyCursor()
+
+    class FakeCtx:
+        def __enter__(self):
+            return FailingFTSConn()
+
+        def __exit__(self, *args):
+            return False
+
+    with patch("src.db.search.get_connection", return_value=FakeCtx()):
+        assert query_memories("dense-scope", "docker") == []
+
+

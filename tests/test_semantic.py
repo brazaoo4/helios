@@ -260,3 +260,29 @@ def test_analyze_scope_contradictions_sets_thinking_budget_and_timeout(monkeypat
     assert result == {"contradictions": [], "merge_candidates": []}
     assert captured["timeout"] >= 45.0
     assert captured["json"]["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 2048}
+
+
+def test_semantic_zero_norm_and_triage_fail_open_guards(monkeypatch):
+    from src.semantic import upsert_memory_embedding
+
+    assert cosine_similarity([0.0, 0.0], [1.0, 0.0]) == 0.0
+
+    # No key -> embedding upsert is no-op and triage returns None
+    with get_connection() as conn:
+        upsert_memory_embedding(conn, 1, "subj", "ignored")
+    assert triage_webhook_drift_with_gemini("diff", [{"id": 1}], "abc") is None
+
+    # Empty diff / empty candidates / malformed Gemini response -> None (fail open)
+    monkeypatch.setenv("HELIOS_GEMINI_API_KEY", "fake-gemini-key")
+    assert triage_webhook_drift_with_gemini("", [{"id": 1}], "abc") is None
+    assert triage_webhook_drift_with_gemini("diff", [], "abc") is None
+
+    orig_client = httpx.Client
+    bad_transport = httpx.MockTransport(
+        lambda req: httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": json.dumps({"not_decisions": []})}]}}]},
+        )
+    )
+    with patch("src.semantic.httpx.Client", side_effect=lambda *a, **kw: orig_client(*a, **{**kw, "transport": bad_transport})):
+        assert triage_webhook_drift_with_gemini("diff", [{"id": 1, "content": "x"}], "abc") is None
