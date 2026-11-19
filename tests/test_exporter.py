@@ -218,3 +218,60 @@ def test_incremental_sync_markdown_exports_preserves_other_scopes():
     hist_a = (get_changelog_dir() / "scope-a_history.md").read_text(encoding="utf-8")
     assert "_(reason: retired in incremental test)_" in hist_a
 
+
+def test_exporter_archive_strips_sensitive_settings_and_ignores_temp_files(tmp_path):
+    from unittest.mock import patch
+
+    from src.db import set_runtime_setting
+    from src.exporter import atomic_write, sync_markdown_exports
+
+    upsert_memory("sec-exp", "fact", "Export secret hygiene check", subject="hygiene")
+    set_runtime_setting("HELIOS_GIT_TOKEN", "super-secret-git-pat")
+    set_runtime_setting("HELIOS_WORD_LIMIT", "30")
+
+    # Empty incremental sync returns immediately
+    assert sync_markdown_exports(scopes=[]) == []
+
+    # Plant temp/orphaned files in export & changelog dirs
+    export_dir = get_export_dir()
+    changelog_dir = get_changelog_dir()
+    export_dir.mkdir(parents=True, exist_ok=True)
+    changelog_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dot = export_dir / ".tmp_ignore.md"
+    part_file = export_dir / "partial.part"
+    orphan_hist = changelog_dir / "ghost_history.md"
+    tmp_hist = changelog_dir / ".tmp_keep.md"
+    tmp_dot.write_text("temp", encoding="utf-8")
+    part_file.write_text("part", encoding="utf-8")
+    orphan_hist.write_text("orphan", encoding="utf-8")
+    tmp_hist.write_text("temp", encoding="utf-8")
+
+    # Portable archive strips sensitive runtime_settings and skips temp/part files, while full sync removes orphan_hist
+    archive_path = create_portable_archive()
+    assert not orphan_hist.exists()
+    assert tmp_hist.exists()
+
+    extract_dir = tmp_path / "sec_extract"
+    extract_dir.mkdir()
+    with tarfile.open(archive_path, "r:gz") as tar:
+        tar.extractall(extract_dir)
+        archived_names = tar.getnames()
+
+    assert not any(".tmp_" in n or n.endswith(".part") for n in archived_names)
+
+    conn = sqlite3.connect(extract_dir / "memory.db")
+    keys = {r[0]: r[1] for r in conn.execute("SELECT key, value FROM runtime_settings").fetchall()}
+    conn.close()
+    assert "HELIOS_GIT_TOKEN" not in keys
+    assert keys.get("HELIOS_WORD_LIMIT") == "30"
+
+    # atomic_write cleans up tempfile if os.replace fails
+    target = tmp_path / "fail_target.md"
+    with patch("src.exporter.os.replace", side_effect=OSError("disk full")):
+        try:
+            atomic_write(target, "hello")
+        except OSError:
+            pass
+    assert not target.exists()
+    assert list(tmp_path.glob(".tmp_*")) == []
+

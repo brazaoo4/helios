@@ -287,3 +287,58 @@ def test_webhook_gemini_diff_triage_keeps_unchanged_active_and_flags_contradicte
         assert row2["status"] == "active"
         assert row2["last_verified_commit"] == "a1b2c3d"
 
+
+def test_git_webhook_bearer_auth_malformed_inputs_and_gitlab_project_fallback(monkeypatch):
+    monkeypatch.setenv("HELIOS_WEBHOOK_SECRET", "bearer-hook-secret")
+    headers_bearer = {"Authorization": "Bearer bearer-hook-secret"}
+
+    save_memory(
+        scope="gl-proj",
+        category="fact",
+        content="App reads deploy.yml",
+        subject="deploy",
+        anchor_files=["deploy.yml"],
+    )
+
+    with TestClient(app) as client:
+        # 1. Empty body, malformed JSON, empty dict, missing repository -> 400
+        assert client.post("/webhook/git", content=b"   ", headers=headers_bearer).status_code == 400
+        assert client.post("/webhook/git", content=b"{bad", headers=headers_bearer).status_code == 400
+        assert client.post("/webhook/git", json={}, headers=headers_bearer).status_code == 400
+        assert client.post("/webhook/git", json={"commits": []}, headers=headers_bearer).status_code == 400
+
+        # 2. Payload object_kind != push ignored (200)
+        res_mr = client.post(
+            "/webhook/git",
+            json={"object_kind": "merge_request", "project": {"name": "gl-proj"}},
+            headers=headers_bearer,
+        )
+        assert res_mr.status_code == 200
+        assert res_mr.json()["status"] == "ignored"
+
+        # 3. GitLab project fallback + zeroed 'after' falls back to head_commit.id
+        res_ok = client.post(
+            "/webhook/git",
+            json={
+                "object_kind": "push",
+                "project": {"name": "gl-proj"},
+                "after": "0" * 40,
+                "head_commit": {"id": "deadbeef1234"},
+                "commits": ["skip-non-dict", {"id": "deadbeef1234", "modified": ["deploy.yml"]}],
+            },
+            headers=headers_bearer,
+        )
+        assert res_ok.status_code == 200
+        body = res_ok.json()
+        assert body["repository"] == "gl-proj"
+        assert body["commits_evaluated"] == 2
+        assert body["files_evaluated"] == 1
+        assert body["memories_flagged_stale"] == 1
+
+    from src.db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT status, stale_reason FROM memories WHERE scope = 'gl-proj'").fetchone()
+        assert row["status"] == "stale"
+        assert "deadbee" in row["stale_reason"]
+

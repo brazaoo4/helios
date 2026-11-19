@@ -106,3 +106,57 @@ def test_read_bounded_body():
         assert await _read_bounded_body(req_stream, max_bytes=5) is None
 
     anyio.run(run_test)
+
+
+def test_auth_gate_unwinds_exception_group_on_streamed_413_and_propagates_real_errors():
+    import anyio
+    import pytest
+
+    from src.middleware.auth import MAX_WEBHOOK_BYTES, AuthGateMiddleware
+
+    async def run_cases():
+        async def app_raises_taskgroup_with_body_read(scope, receive, send):
+            # Trigger _PayloadTooLargeError inside an AnyIO task group (raises BaseExceptionGroup)
+            async with anyio.create_task_group() as tg:
+                async def reader():
+                    while True:
+                        msg = await receive()
+                        if not msg.get("more_body", False):
+                            break
+
+                tg.start_soon(reader)
+
+        gate_413 = AuthGateMiddleware(app_raises_taskgroup_with_body_read)
+        sent: list[dict] = []
+        chunks = iter(
+            [
+                {"type": "http.request", "body": b"A" * (MAX_WEBHOOK_BYTES + 64), "more_body": False},
+            ]
+        )
+
+        async def send(msg):
+            sent.append(msg)
+
+        async def receive():
+            return next(chunks, {"type": "http.disconnect"})
+
+        await gate_413(
+            {"type": "http", "method": "POST", "path": "/mcp", "headers": []},
+            receive,
+            send,
+        )
+        assert sent[0]["status"] == 413
+
+        # Unrelated exceptions must propagate (not swallowed)
+        async def app_boom(scope, receive, send):
+            raise RuntimeError("real internal failure")
+
+        gate_boom = AuthGateMiddleware(app_boom)
+        with pytest.raises(RuntimeError, match="real internal failure"):
+            await gate_boom(
+                {"type": "http", "method": "POST", "path": "/mcp", "headers": []},
+                receive,
+                send,
+            )
+
+    anyio.run(run_cases)

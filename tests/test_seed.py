@@ -360,3 +360,63 @@ memories:
     assert bad_yaml.exists()
     assert not (tmp_path / "seed.yaml.imported").exists()
 
+
+def test_seed_declarative_invalid_structures_and_cli_reset_json(tmp_path, monkeypatch):
+    import sys
+
+    from src.seed import _parse_declarative_seed_file
+
+    # 1. Unsupported extension & malformed structure validations
+    bad_ext = tmp_path / "seed.txt"
+    bad_ext.write_text("hello", encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsupported seed file extension"):
+        _parse_declarative_seed_file(bad_ext)
+
+    empty_json = tmp_path / "empty.json"
+    empty_json.write_text("null", encoding="utf-8")
+    assert _parse_declarative_seed_file(empty_json) == ([], {})
+
+    bad_mem = tmp_path / "bad_mem.json"
+    bad_mem.write_text(json.dumps({"memories": "not-a-list"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a list"):
+        _parse_declarative_seed_file(bad_mem)
+
+    bad_alias = tmp_path / "bad_alias.json"
+    bad_alias.write_text(json.dumps({"memories": [], "aliases": ["bad"]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="must be a dictionary"):
+        _parse_declarative_seed_file(bad_alias)
+
+    bad_root = tmp_path / "bad_root.json"
+    bad_root.write_text(json.dumps("scalar-root"), encoding="utf-8")
+    with pytest.raises(ValueError, match="root must be a list"):
+        _parse_declarative_seed_file(bad_root)
+
+    # 2. Invalid alias + non-dict item skipped gracefully during declarative ingestion
+    seed_json = tmp_path / "seed.json"
+    seed_json.write_text(
+        json.dumps(
+            {
+                "aliases": {"global": "other", "good-alias": "good-target"},
+                "memories": [
+                    "not-a-dict",
+                    {
+                        "scope": "good-alias",
+                        "category": "fact",
+                        "subject": "ok",
+                        "content": "Valid declarative fact survives bad sibling",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert ingest_declarative_seed_files(tmp_path) == 1
+    assert resolve_scope("good-alias") == "good-target"
+
+    # 3. Nonexistent data_dir returns 0 cleanly
+    assert ingest_declarative_seed_files(tmp_path / "missing-dir") == 0
+
+    # 4. CLI --reset with --json and --dry-run
+    monkeypatch.setattr(sys, "argv", ["src.seed", "--reset", "--scope", "good-target", "--json", "--dry-run"])
+    main()
+

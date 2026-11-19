@@ -347,3 +347,171 @@ def test_webhooks_gitlab_and_disable_lifecycle(monkeypatch):
             res_dis = disable_repo_webhooks(repos=["my-group/my-project"])
             assert "my-group/my-project" in res_dis["disabled"]
 
+
+def test_outbound_ssrf_and_token_destination_pinning(monkeypatch):
+    import socket
+
+    from src.db import set_runtime_setting
+    from src.webhooks import _assert_safe_outbound_url, _verify_token_destination_allowed
+
+    # 1. Blocked resolved IPs (loopback, IPv4-mapped IPv6 loopback, cloud metadata)
+    for bad_ip in ("127.0.0.1", "::ffff:127.0.0.1", "169.254.169.254", "100.100.100.200"):
+        with patch(
+            "src.webhooks.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (bad_ip, 443))],
+        ):
+            with pytest.raises(ValueError, match="forbidden"):
+                _assert_safe_outbound_url("https://evil-redirect.test")
+
+    # 2. Fail-closed on DNS resolution failure
+    with patch("src.webhooks.socket.getaddrinfo", side_effect=socket.gaierror("NXDOMAIN")):
+        with pytest.raises(ValueError, match="Unable to resolve destination host"):
+            _assert_safe_outbound_url("https://nonexistent.invalid")
+
+    # 3. Refuse to send env-sourced HELIOS_GIT_TOKEN to a DB-overridden Git host
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "forgejo")
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://git.internal.lan")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "env-pat-123")
+    set_runtime_setting("HELIOS_GIT_API_URL", "https://attacker.example.com")
+    with pytest.raises(ValueError, match="Security violation"):
+        _verify_token_destination_allowed("https://attacker.example.com/api/v1")
+
+    # Matching host stays allowed
+    _verify_token_destination_allowed("https://git.internal.lan/api/v1")
+
+
+def test_webhook_provider_fallbacks_pagination_and_error_redaction(monkeypatch):
+    from src.webhooks import fetch_commit_diff
+
+    monkeypatch.setenv("HELIOS_GIT_PROVIDER", "github")
+    monkeypatch.setenv("HELIOS_GIT_TOKEN", "ghp_" + ("x" * 36))
+    monkeypatch.setenv("HELIOS_GIT_OWNER", "acme-org")
+    monkeypatch.setenv("HELIOS_WEBHOOK_URL", "https://helios.example.com/webhook/git")
+
+    # 1. /user/repos returns 403 -> fallback to /orgs/acme-org/repos + 2-page pagination
+    page1 = [
+        {"name": f"repo-{i}", "full_name": f"acme-org/repo-{i}", "owner": {"login": "acme-org"}, "fork": False, "archived": False, "id": i}
+        for i in range(100)
+    ]
+    page2 = [
+        {"name": "repo-100", "full_name": "acme-org/repo-100", "owner": {"login": "acme-org"}, "fork": False, "archived": False, "id": 100}
+    ]
+
+    def gh_handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/user/repos" in url:
+            return httpx.Response(403, text="forbidden")
+        if "/orgs/acme-org/repos" in url:
+            page = request.url.params.get("page")
+            return httpx.Response(200, json=page1 if page == "1" else page2)
+        if "/repos/acme-org/repo-0/hooks" in url and request.method == "GET":
+            return httpx.Response(500, text="error for ghp_" + ("x" * 36))
+        if "/repos/acme-org/repo-1/hooks" in url and request.method == "POST":
+            return httpx.Response(500, text="create failed")
+        if "/repos/acme-org/repo-1/hooks" in url and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if "/repos/acme-org/missing/hooks" in url and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if "/repos/acme-org/del-err/hooks" in url and request.method == "GET":
+            return httpx.Response(200, json=[{"id": 9, "config": {"url": "https://helios.example.com/webhook/git"}}])
+        if "/repos/acme-org/del-err/hooks/9" in url and request.method == "DELETE":
+            return httpx.Response(500, text="delete failed")
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(gh_handler)
+    orig_client = httpx.Client
+
+    with patch("httpx.Client", side_effect=lambda *a, **kw: orig_client(*a, **{**kw, "transport": transport})):
+        with httpx.Client(transport=transport) as c:
+            repos = fetch_candidate_repositories(c, "github", "https://api.github.com", "acme-org")
+        assert len(repos) == 101
+
+        en_res = enable_repo_webhooks(repos=["acme-org/repo-0", "acme-org/repo-1"])
+        assert len(en_res["failed"]) == 2
+        assert ("ghp_" + ("x" * 36)) not in en_res["failed"][0]["error"]
+
+        dis_res = disable_repo_webhooks(repos=["acme-org/missing", "acme-org/del-err"])
+        assert dis_res["not_found"] == ["acme-org/missing"]
+        assert len(dis_res["failed"]) == 1
+
+    # 2. fetch_commit_diff edge cases: unconfigured/non-list GitLab JSON/short repo lookup
+    assert fetch_commit_diff("braz/helios", "0" * 40) is None
+    assert fetch_commit_diff("helios", "abc123", provider="forgejo", api_url="") is None
+
+    def bad_gl(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(200, json={"username": "gl-owner"})
+        return httpx.Response(200, json={"unexpected": "dict-not-list"})
+
+    gl_transport = httpx.MockTransport(bad_gl)
+    monkeypatch.delenv("HELIOS_GIT_OWNER", raising=False)
+    monkeypatch.setenv("HELIOS_GIT_API_URL", "https://gitlab.example.com")
+    with patch("httpx.Client", side_effect=lambda *a, **kw: orig_client(*a, **{**kw, "transport": gl_transport})):
+        assert (
+            fetch_commit_diff(
+                "my-repo",
+                "abc123",
+                provider="gitlab",
+                api_url="https://gitlab.example.com",
+            )
+            is None
+        )
+
+    # 3. GitLab group & Forgejo org repo listing fallback when /projects or /user/repos fails
+    def group_org_handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/api/v4/projects" in url or "/api/v1/user/repos" in url:
+            return httpx.Response(404, text="not found")
+        if "/api/v4/groups/my-grp/projects" in url:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "gl-app",
+                        "path_with_namespace": "my-grp/gl-app",
+                        "namespace": {"path": "my-grp"},
+                        "archived": False,
+                    }
+                ],
+            )
+        if "/api/v1/orgs/my-org/repos" in url:
+            return httpx.Response(
+                200,
+                json=[
+                    {"name": "fj-app", "full_name": "my-org/fj-app", "owner": {"login": "my-org"}}
+                ],
+            )
+        return httpx.Response(404)
+
+    go_transport = httpx.MockTransport(group_org_handler)
+    with httpx.Client(transport=go_transport) as c:
+        gl_repos = fetch_candidate_repositories(c, "gitlab", "https://gitlab.example.com/api/v4", "my-grp")
+        fj_repos = fetch_candidate_repositories(c, "forgejo", "https://git.internal.lan/api/v1", "my-org")
+    assert [r["full_name"] for r in gl_repos] == ["my-grp/gl-app"]
+    assert [r["full_name"] for r in fj_repos] == ["my-org/fj-app"]
+
+    # 4. Validation & provider error paths (bad repo ident, missing webhook url, 404 diff)
+    from src.webhooks import _filter_diff_for_files, _validate_repo_ident
+
+    with pytest.raises(ValueError, match="Invalid repository owner"):
+        _validate_repo_ident("..", "repo")
+    with pytest.raises(ValueError, match="Invalid repository name"):
+        _validate_repo_ident("owner", "bad/name")
+
+    monkeypatch.delenv("HELIOS_WEBHOOK_URL", raising=False)
+    with pytest.raises(ValueError, match="HELIOS_WEBHOOK_URL is required"):
+        enable_repo_webhooks(repos=["acme-org/repo-0"])
+    with pytest.raises(ValueError, match="HELIOS_WEBHOOK_URL is required"):
+        disable_repo_webhooks(repos=["acme-org/repo-0"])
+
+    # Empty matched_files or no diff header truncates cleanly
+    assert _filter_diff_for_files("plain diff text", None) == "plain diff text"
+
+    not_found_transport = httpx.MockTransport(lambda req: httpx.Response(404, text="missing"))
+    with patch(
+        "httpx.Client",
+        side_effect=lambda *a, **kw: orig_client(*a, **{**kw, "transport": not_found_transport}),
+    ):
+        assert fetch_commit_diff("acme/app", "abc123", provider="github") is None
+        assert fetch_commit_diff("acme/app", "abc123", provider="forgejo", api_url="https://git.internal.lan") is None
+

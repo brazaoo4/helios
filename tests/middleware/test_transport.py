@@ -159,3 +159,113 @@ def test_streamable_http_full_session_lifecycle_and_attribution():
         res_del = client.delete("/mcp", headers=session_headers)
         assert res_del.status_code in (200, 202, 204)
 
+
+def test_hybrid_mcp_sse_rewrites_endpoint_token_and_routes_active_get():
+    from unittest.mock import patch
+
+    from src.middleware.transport import HybridMCPHandler, StreamableMCPHandler
+
+    handler = HybridMCPHandler()
+    sent: list[dict] = []
+
+    async def fake_send(msg):
+        sent.append(msg)
+
+    async def fake_receive():
+        return {"type": "http.disconnect"}
+
+    async def fake_sse_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"event: endpoint\ndata: /messages/?session_id=abc123def456\n\n",
+                "more_body": False,
+            }
+        )
+
+    # 1. Verify ?token= is URL-encoded and appended to SSE endpoint event
+    scope_sse = {
+        "type": "http",
+        "method": "GET",
+        "path": "/sse",
+        "query_string": b"token=secret+val&foo=1",
+        "headers": [],
+    }
+    with patch("src.middleware.transport.sse_app", side_effect=fake_sse_app):
+        anyio.run(handler, scope_sse, fake_receive, fake_send)
+
+    body_msgs = [m["body"] for m in sent if m.get("type") == "http.response.body"]
+    assert any(b"/messages/?session_id=abc123def456&token=secret%20val" in b for b in body_msgs)
+
+    # 2. Invalid UTF-8 mcp-session-id falls back cleanly to sse_app without crashing
+    sent_bad_sid: list[dict] = []
+
+    async def send_bad_sid(msg):
+        sent_bad_sid.append(msg)
+
+    scope_bad_sid = {
+        "type": "http",
+        "method": "GET",
+        "path": "/sse",
+        "query_string": b"",
+        "headers": [(b"mcp-session-id", b"\xff\xfe")],
+    }
+    with patch("src.middleware.transport.sse_app", side_effect=fake_sse_app):
+        anyio.run(handler, scope_bad_sid, fake_receive, send_bad_sid)
+    assert any(m.get("status") == 200 for m in sent_bad_sid)
+
+    # 3. Non-HTTP ASGI scopes pass through cleanly, and active streamable GET hits session_manager
+    passthrough: list[dict] = []
+
+    async def send_pass(msg):
+        passthrough.append(msg)
+
+    with patch("src.middleware.transport.sse_app", side_effect=fake_sse_app):
+        anyio.run(handler, {"type": "lifespan"}, fake_receive, send_pass)
+    assert any(m.get("status") == 200 for m in passthrough)
+
+    handled_streamable: list[str] = []
+
+    class FakeMgr:
+        _server_instances = {"active-sid-1": object()}
+
+        async def handle_request(self, scope, receive, send):
+            handled_streamable.append(scope["method"])
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    class FakeMCP:
+        session_manager = FakeMgr()
+
+    with patch("src.middleware.transport.mcp", new=FakeMCP()):
+        anyio.run(
+            handler,
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/mcp",
+                "headers": [(b"mcp-session-id", b"active-sid-1")],
+            },
+            fake_receive,
+            send_pass,
+        )
+    assert handled_streamable == ["GET"]
+
+    # 4. StreamableMCPHandler falls back to sse_app when session_manager is absent
+    streamable_sent: list[dict] = []
+
+    async def send_streamable(msg):
+        streamable_sent.append(msg)
+
+    with (
+        patch("src.middleware.transport.mcp", new=object()),
+        patch("src.middleware.transport.sse_app", side_effect=fake_sse_app),
+    ):
+        anyio.run(
+            StreamableMCPHandler(),
+            {"type": "http", "method": "POST", "path": "/mcp", "headers": []},
+            fake_receive,
+            send_streamable,
+        )
+    assert any(m.get("status") == 200 for m in streamable_sent)
+
