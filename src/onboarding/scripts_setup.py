@@ -77,32 +77,35 @@ function Set-HeliosDirective {{
 }}
 
 # 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
-$configDir = Join-Path $env:USERPROFILE ".gemini\\config"
-if (-not (Test-Path $configDir)) {{ New-Item -ItemType Directory -Path $configDir -Force | Out-Null }}
-$mcpConfigPath = Join-Path $configDir "mcp_config.json"
+$geminiRoot = Join-Path $env:USERPROFILE ".gemini"
+$configDir = Join-Path $geminiRoot "config"
+if ((Test-Path $geminiRoot) -or $targetClient -eq "antigravity" -or $targetClient -eq "all") {{
+    if (-not (Test-Path $configDir)) {{ New-Item -ItemType Directory -Path $configDir -Force | Out-Null }}
+    $mcpConfigPath = Join-Path $configDir "mcp_config.json"
 
-$mcpData = @{{ mcpServers = @{{}} }}
-if (Test-Path $mcpConfigPath) {{
-    try {{
-        $existing = Get-Content -Path $mcpConfigPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
-        if ($existing -and $existing.ContainsKey("mcpServers")) {{
-            $mcpData = $existing
+    $mcpData = @{{ mcpServers = @{{}} }}
+    if (Test-Path $mcpConfigPath) {{
+        try {{
+            $existing = Get-Content -Path $mcpConfigPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($existing -and $existing.ContainsKey("mcpServers")) {{
+                $mcpData = $existing
+            }}
+        }} catch {{
+            Write-Warning "Could not parse existing mcp_config.json; initializing fresh server map."
         }}
-    }} catch {{
-        Write-Warning "Could not parse existing mcp_config.json; initializing fresh server map."
     }}
+    if (-not $mcpData.ContainsKey("mcpServers") -or $null -eq $mcpData.mcpServers) {{
+        $mcpData.mcpServers = @{{}}
+    }}
+    $mcpData.mcpServers["helios"] = @{{ url = $mcpUrl }}
+    $mcpJson = $mcpData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($mcpConfigPath, $mcpJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Antigravity MCP registered in $mcpConfigPath" -ForegroundColor Green
 }}
-if (-not $mcpData.ContainsKey("mcpServers") -or $null -eq $mcpData.mcpServers) {{
-    $mcpData.mcpServers = @{{}}
-}}
-$mcpData.mcpServers["helios"] = @{{ url = $mcpUrl }}
-$mcpJson = $mcpData | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText($mcpConfigPath, $mcpJson, [System.Text.Encoding]::UTF8)
-Write-Host "  [OK] Antigravity MCP registered in $mcpConfigPath" -ForegroundColor Green
 
-# 2. Cursor MCP Configuration (if %USERPROFILE%\\.cursor exists or client is cursor/all)
+# 2. Cursor MCP Configuration (if %USERPROFILE%\\.cursor exists, cursor binary exists, or client is cursor)
 $cursorDir = Join-Path $env:USERPROFILE ".cursor"
-if ((Test-Path $cursorDir) -or $targetClient -eq "cursor" -or $targetClient -eq "all") {{
+if ((Test-Path $cursorDir) -or (Get-Command cursor -ErrorAction SilentlyContinue) -or $targetClient -eq "cursor") {{
     if (-not (Test-Path $cursorDir)) {{ New-Item -ItemType Directory -Path $cursorDir -Force | Out-Null }}
     $cursorMcpPath = Join-Path $cursorDir "mcp.json"
     $cursorData = @{{ mcpServers = @{{}} }}
@@ -243,50 +246,54 @@ if ((Test-Path $opencodeDir) -or $targetClient -eq "opencode") {{
     Write-Host "  [OK] OpenCode directive embedded in $ocAgentsPath" -ForegroundColor Green
 }}
 
-# 8. Global Directive (GEMINI.md with CRLF and symlink handling)
-$geminiPath = Join-Path $configDir "GEMINI.md"
-Set-HeliosDirective -FilePath $geminiPath
-Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Green
+if ((Test-Path $geminiRoot) -or $targetClient -eq "antigravity" -or $targetClient -eq "all") {{
+    # 8. Global Directive (GEMINI.md with CRLF and symlink handling)
+    $geminiPath = Join-Path $configDir "GEMINI.md"
+    Set-HeliosDirective -FilePath $geminiPath
+    Write-Host "  [OK] Global directive embedded in $geminiPath" -ForegroundColor Green
 
-# 9. /remember Skill (~/.gemini/skills/remember/SKILL.md)
-$skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
-if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
-$skillPath = Join-Path $skillDir "SKILL.md"
-$skillText = @'
+    # 9. /remember Skill (~/.gemini/config/skills/remember/SKILL.md & ~/.gemini/skills/remember/SKILL.md)
+    $skillText = @'
 {skill}
 '@
-[System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
-Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
+    foreach ($skillBase in @($configDir, $geminiRoot)) {{
+        $skillDir = Join-Path $skillBase "skills\\remember"
+        if (-not (Test-Path $skillDir)) {{ New-Item -ItemType Directory -Path $skillDir -Force | Out-Null }}
+        $skillPath = Join-Path $skillDir "SKILL.md"
+        [System.IO.File]::WriteAllText($skillPath, $skillText, [System.Text.Encoding]::UTF8)
+        Write-Host "  [OK] /remember skill installed in $skillPath" -ForegroundColor Green
+    }}
 
-# 10. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
-$scriptsDir = Join-Path $configDir "scripts"
-if (-not (Test-Path $scriptsDir)) {{ New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }}
-$guardPath = Join-Path $scriptsDir "helios_guard.py"
-$guardText = @'
+    # 10. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
+    $scriptsDir = Join-Path $configDir "scripts"
+    if (-not (Test-Path $scriptsDir)) {{ New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }}
+    $guardPath = Join-Path $scriptsDir "helios_guard.py"
+    $guardText = @'
 {guard_script}
 '@
-[System.IO.File]::WriteAllText($guardPath, $guardText, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($guardPath, $guardText, [System.Text.Encoding]::UTF8)
 
-$hooksPath = Join-Path $configDir "hooks.json"
-$hooksData = @{{}}
-if (Test-Path $hooksPath) {{
-    try {{
-        $hExisting = Get-Content -Path $hooksPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
-        if ($hExisting) {{ $hooksData = $hExisting }}
-    }} catch {{}}
+    $hooksPath = Join-Path $configDir "hooks.json"
+    $hooksData = @{{}}
+    if (Test-Path $hooksPath) {{
+        try {{
+            $hExisting = Get-Content -Path $hooksPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            if ($hExisting) {{ $hooksData = $hExisting }}
+        }} catch {{}}
+    }}
+    $hooksData["helios-write-through-guard"] = @{{
+        PreInvocation = @(
+            @{{
+                type = "command"
+                command = "python3 `"$guardPath`""
+                timeout = 5
+            }}
+        )
+    }}
+    $hooksJson = $hooksData | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($hooksPath, $hooksJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Helios Write-Through guard hook registered in $hooksPath" -ForegroundColor Green
 }}
-$hooksData["helios-write-through-guard"] = @{{
-    PreInvocation = @(
-        @{{
-            type = "command"
-            command = "python3 `"$guardPath`""
-            timeout = 5
-        }}
-    )
-}}
-$hooksJson = $hooksData | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText($hooksPath, $hooksJson, [System.Text.Encoding]::UTF8)
-Write-Host "  [OK] Helios Write-Through guard hook registered in $hooksPath" -ForegroundColor Green
 
 Write-Host "`n==================================================" -ForegroundColor Cyan
 Write-Host "Helios Client Environment Configured Successfully!" -ForegroundColor Cyan
@@ -319,7 +326,6 @@ def generate_setup_bash(
     active_limit = get_word_limit()
     directive = generate_global_directive(role_norm, word_limit=active_limit).strip()
     skill = generate_remember_skill(word_limit=active_limit).strip()
-    guard_script = generate_guard_hook_script().strip()
     guard_script = generate_guard_hook_script().strip()
 
     esc_base = escape_bash_single_quote(clean_base)
@@ -374,10 +380,11 @@ PYEOF
 
 # 1. Antigravity MCP Configuration (~/.gemini/config/mcp_config.json)
 CONFIG_DIR="$HOME/.gemini/config"
-mkdir -p "$CONFIG_DIR"
-MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
+if [ -d "$HOME/.gemini" ] || [ "$CLIENT_NORM" = "antigravity" ] || [ "$CLIENT_NORM" = "all" ]; then
+    mkdir -p "$CONFIG_DIR"
+    MCP_CONFIG="$CONFIG_DIR/mcp_config.json"
 
-python3 - "$MCP_CONFIG" "$MCP_URL" <<'PYEOF'
+    python3 - "$MCP_CONFIG" "$MCP_URL" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
 mcp_url = sys.argv[2]
@@ -394,11 +401,12 @@ data['mcpServers']['helios'] = {{'url': mcp_url}}
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 PYEOF
-echo "  [OK] Antigravity MCP registered in $MCP_CONFIG"
+    echo "  [OK] Antigravity MCP registered in $MCP_CONFIG"
+fi
 
-# 2. Cursor MCP Configuration (if ~/.cursor exists or client is cursor/all)
+# 2. Cursor MCP Configuration (if ~/.cursor exists, cursor binary exists, or client is cursor)
 CURSOR_DIR="$HOME/.cursor"
-if [ -d "$CURSOR_DIR" ] || [ "$CLIENT_NORM" = "cursor" ] || [ "$CLIENT_NORM" = "all" ]; then
+if [ -d "$CURSOR_DIR" ] || command -v cursor >/dev/null 2>&1 || [ "$CLIENT_NORM" = "cursor" ]; then
     mkdir -p "$CURSOR_DIR"
     CURSOR_MCP="$CURSOR_DIR/mcp.json"
     python3 - "$CURSOR_MCP" "$SSE_URL" <<'PYEOF'
@@ -571,29 +579,32 @@ PYEOF
     echo "  [OK] OpenCode directive embedded in $OPENCODE_DIR/AGENTS.md"
 fi
 
-# 9. Global Directive (GEMINI.md with symlink resolution)
-GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
-inject_directive "$GEMINI_PATH"
-echo "  [OK] Global directive embedded in $GEMINI_PATH"
+if [ -d "$HOME/.gemini" ] || [ "$CLIENT_NORM" = "antigravity" ] || [ "$CLIENT_NORM" = "all" ]; then
+    # 9. Global Directive (GEMINI.md with symlink resolution)
+    GEMINI_PATH="$CONFIG_DIR/GEMINI.md"
+    inject_directive "$GEMINI_PATH"
+    echo "  [OK] Global directive embedded in $GEMINI_PATH"
 
-# 10. /remember Skill (~/.gemini/skills/remember/SKILL.md)
-SKILL_DIR="$HOME/.gemini/skills/remember"
-mkdir -p "$SKILL_DIR"
-cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
+    # 10. /remember Skill (~/.gemini/config/skills/remember/SKILL.md & ~/.gemini/skills/remember/SKILL.md)
+    for SKILL_BASE in "$CONFIG_DIR" "$HOME/.gemini"; do
+        SKILL_DIR="$SKILL_BASE/skills/remember"
+        mkdir -p "$SKILL_DIR"
+        cat <<'HELIOS_SKILL_EOF' > "$SKILL_DIR/SKILL.md"
 {skill}
 HELIOS_SKILL_EOF
-echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
+        echo "  [OK] /remember skill installed in $SKILL_DIR/SKILL.md"
+    done
 
-# 11. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
-SCRIPTS_DIR="$CONFIG_DIR/scripts"
-mkdir -p "$SCRIPTS_DIR"
-cat <<'HELIOS_GUARD_EOF' > "$SCRIPTS_DIR/helios_guard.py"
+    # 11. Antigravity Cognitive Guard Hook (~/.gemini/config/hooks.json & scripts/helios_guard.py)
+    SCRIPTS_DIR="$CONFIG_DIR/scripts"
+    mkdir -p "$SCRIPTS_DIR"
+    cat <<'HELIOS_GUARD_EOF' > "$SCRIPTS_DIR/helios_guard.py"
 {guard_script}
 HELIOS_GUARD_EOF
-chmod +x "$SCRIPTS_DIR/helios_guard.py"
+    chmod +x "$SCRIPTS_DIR/helios_guard.py"
 
-HOOKS_PATH="$CONFIG_DIR/hooks.json"
-python3 - "$HOOKS_PATH" <<'PYEOF'
+    HOOKS_PATH="$CONFIG_DIR/hooks.json"
+    python3 - "$HOOKS_PATH" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
 data = {{}}
@@ -617,7 +628,8 @@ data['helios-write-through-guard'] = {{
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 PYEOF
-echo "  [OK] Helios Write-Through guard hook registered in $HOOKS_PATH"
+    echo "  [OK] Helios Write-Through guard hook registered in $HOOKS_PATH"
+fi
 
 echo ""
 echo "=================================================="

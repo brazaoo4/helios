@@ -3,12 +3,14 @@
 import json
 import urllib.parse
 
+from src import DIRECTIVE_VERSION
 from src.config import get_api_key, get_word_limit
 from src.onboarding.client_config import (
     SUPPORTED_CLIENTS,
     get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
+    get_skill_paths,
     normalize_os_platform,
     resolve_server_base_url,
     validate_onboarding_params,
@@ -17,6 +19,17 @@ from src.onboarding.templates import (
     generate_global_directive,
     generate_remember_skill,
 )
+
+
+def _build_setup_query(instance_role: str, client: str, has_auth: bool) -> str:
+    """Build query string for /setup.sh and /setup.ps1 1-liner update tips without leaking secrets."""
+    params = [
+        f"role={urllib.parse.quote(instance_role, safe='')}",
+        f"client={urllib.parse.quote(client, safe='')}",
+    ]
+    if has_auth:
+        params.append("token=<YOUR_HELIOS_API_KEY>")
+    return "?" + "&".join(params)
 
 
 def generate_client_bundle(
@@ -92,36 +105,81 @@ def generate_client_bundle(
         ])
         return "\n".join(lines)
 
-    # --- Action: INSTALL / UPDATE / SWITCH_ROLE ---
+    # --- Action: INSTALL / UPDATE / UPDATE_DIRECTIVES / SWITCH_ROLE ---
     has_auth = get_api_key() is not None
     token_placeholder = "<YOUR_HELIOS_API_KEY>" if has_auth else None
     active_word_limit = get_word_limit()
+    is_auto_os = (os_platform or "auto").strip().lower() == "auto"
+    os_label = f"`{plat}` (auto-detected from server; pass `os_platform` explicitly for macOS/Windows clients)" if is_auto_os else f"`{plat}`"
+    setup_query = _build_setup_query(instance_role, client, has_auth)
+    ag_skill_path, cli_skill_path = get_skill_paths(plat)
 
     lines = [
         "# Helios Client Setup Bundle",
         f"- **Lifecycle Action**: `{act}`",
+        f"- **Directive Protocol Version**: `v{DIRECTIVE_VERSION}`",
         f"- **Helios Base URL**: `{resolved_base}`",
         f"- **Authentication**: {'HELIOS_API_KEY required' if has_auth else 'Open Mode (No API key required)'}",
         f"- **Active Word Limit**: `{active_word_limit}` words",
-        f"- **Target OS**: `{plat}`",
+        f"- **Target OS**: {os_label}",
         f"- **Instance Role**: `{instance_role}`",
+        "",
+        "> [!TIP]",
+        "> **Automated 1-Liner Update (also refreshes `helios_guard.py` & `hooks.json`)**:",
+        f"> - Linux/macOS: `curl -fsSL \"{resolved_base}/setup.sh{setup_query}\" | bash`",
+        f"> - Windows (PowerShell): `irm \"{resolved_base}/setup.ps1{setup_query}\" | iex`",
         "",
         "> [!IMPORTANT]",
         "> **Idempotent Update Rule**:",
         "> 1. In MCP config files, update/insert only the `\"helios\"` server block; preserve all other servers.",
         "> 2. In `GEMINI.md` / `CLAUDE.md` / `AGENTS.md` / `global_rules.md` / `.cursor/rules/helios.mdc`, if `<!-- HELIOS:START -->...<!-- HELIOS:END -->` already exists,",
         ">    replace only the content between those markers. Do NOT clobber other custom user instructions.",
-        "",
-        "---",
-        "## 1. MCP Configuration",
+        "> 3. Preserve your existing machine role: if the existing header contains `(Server CLI ...)`, use `instance_role=\"server-cli\"`.",
         "",
     ]
 
     clients_to_show = list(SUPPORTED_CLIENTS) if client == "all" else [client]
 
+    if act in ("update_directives", "switch_role"):
+        lines.append("---")
+        lines.append("## 1. Target Directive Path(s)")
+        lines.append("")
+        for c in clients_to_show:
+            dir_path = get_directive_path(c, plat)
+            lines.append(f"- **{c.capitalize()}**: `{dir_path}`")
+        lines.append("")
+        lines.extend([
+            "---",
+            "## 2. Global Agent Directive (`GEMINI.md` / `CLAUDE.md` / `AGENTS.md` / `global_rules.md` / `.cursor/rules/helios.mdc`)",
+            "",
+            "```markdown",
+            generate_global_directive(instance_role, word_limit=active_word_limit).strip(),
+            "```",
+            "",
+        ])
+        if act == "update_directives" and client in ("antigravity", "all"):
+            lines.extend([
+                "---",
+                f"## 3. `/remember` Skill (`{ag_skill_path}` & `{cli_skill_path}`)",
+                "",
+                "```markdown",
+                generate_remember_skill(word_limit=active_word_limit).strip(),
+                "```",
+                "",
+                "> [!NOTE]",
+                "> Re-run `setup.sh` / `setup.ps1` above if you also need to refresh `~/.gemini/config/scripts/helios_guard.py` and `hooks.json`.",
+            ])
+        return "\n".join(lines)
+
+    lines.extend([
+        "---",
+        "## 1. MCP Configuration",
+        "",
+    ])
+
     for c in clients_to_show:
-        path = get_mcp_config_path(c, os_platform)
-        dir_path = get_directive_path(c, os_platform)
+        path = get_mcp_config_path(c, plat)
+        dir_path = get_directive_path(c, plat)
         snippet = get_mcp_config_snippet(c, resolved_base, token_placeholder)
         lines.append(f"### {c.capitalize()}")
         lines.append(f"- **MCP Config Path**: `{path}`")
@@ -149,7 +207,7 @@ def generate_client_bundle(
         "```",
         "",
         "---",
-        "## 3. `/remember` Skill (`~/.gemini/skills/remember/SKILL.md`)",
+        f"## 3. `/remember` Skill (`{ag_skill_path}` & `{cli_skill_path}`)",
         "",
         "```markdown",
         generate_remember_skill(word_limit=active_word_limit).strip(),
@@ -225,7 +283,7 @@ def generate_setup_markdown(
         "   - **Windows Note**: Files may use CRLF (`\\r\\n`) line endings and `GEMINI.md` may be a symlink. "
         "Use atomic script replacement or Python instead of exact-string multi-line matching to avoid newline mismatches.\n"
         "   - **PowerShell Note**: Always use `curl.exe -m 10` or `Invoke-RestMethod`, never bare `curl` which can hang on standard I/O.\n"
-        "4. Install the `/remember` skill into `~/.gemini/skills/remember/SKILL.md`.\n"
+        "4. Install the `/remember` skill into `~/.gemini/config/skills/remember/SKILL.md` (Antigravity) and `~/.gemini/skills/remember/SKILL.md` (Gemini CLI).\n"
         "5. **Interactive Git Drift Webhook Setup (Mandatory Follow-Up)**:\n"
         "   - After verifying the MCP connection, immediately call `manage_git_webhooks(action='list')` to audit repository webhooks.\n"
         "   - Present the repository checklist to the user and ask: *'Which of these repositories would you like to enable automated push drift tracking on?'*\n"
@@ -279,7 +337,7 @@ def generate_setup_markdown(
         "```markdown\n"
         + generate_global_directive("workstation", word_limit=active_word_limit).strip()
         + "\n```\n\n"
-        "### `/remember` Skill (`~/.gemini/skills/remember/SKILL.md`):\n"
+        "### `/remember` Skill (`~/.gemini/config/skills/remember/SKILL.md` & `~/.gemini/skills/remember/SKILL.md`):\n"
         "```markdown\n"
         + generate_remember_skill(word_limit=active_word_limit).strip()
         + "\n```\n"

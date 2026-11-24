@@ -48,6 +48,10 @@ def test_bash_uninstall_execution_cleans_helios_and_preserves_user_configs(tmp_p
     guard_script.parent.mkdir(parents=True)
     guard_script.write_text("print('guard')")
 
+    ag_skill_file = gemini_cfg / "skills" / "remember" / "SKILL.md"
+    ag_skill_file.parent.mkdir(parents=True)
+    ag_skill_file.write_text("name: remember")
+
     skill_file = fake_home / ".gemini" / "skills" / "remember" / "SKILL.md"
     skill_file.parent.mkdir(parents=True)
     skill_file.write_text("name: remember")
@@ -93,11 +97,20 @@ def test_bash_uninstall_execution_cleans_helios_and_preserves_user_configs(tmp_p
     assert "helios-write-through-guard" not in hooks_data
     assert "user-linter" in hooks_data
 
-    # Verify guard script, skill directory, and empty .mdc were deleted
+    # Verify guard script, both skill directories, and empty .mdc were deleted
     assert not guard_script.exists()
+    assert not ag_skill_file.exists()
+    assert not (gemini_cfg / "skills" / "remember").exists()
     assert not skill_file.exists()
     assert not (fake_home / ".gemini" / "skills" / "remember").exists()
     assert not helios_mdc.exists()
+
+    # Verify PowerShell uninstaller also targets both Antigravity and Gemini CLI skill paths
+    from src.onboarding.scripts_uninstall import generate_uninstall_powershell
+
+    ps_content = generate_uninstall_powershell("https://helios.example.com", client="antigravity")
+    assert r"skills\remember" in ps_content
+    assert r".gemini\skills\remember" in ps_content
 
     # Verify Codex config.toml preserved custom server
     c_text = codex_toml.read_text()

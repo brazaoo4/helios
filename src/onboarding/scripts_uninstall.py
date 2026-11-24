@@ -76,11 +76,15 @@ if ($targetClient -eq "antigravity" -or $targetClient -eq "all") {{
         Write-Host "  [OK] Deleted $guardScript" -ForegroundColor Green
     }}
 
-    # /remember skill
-    $skillDir = Join-Path $env:USERPROFILE ".gemini\\skills\\remember"
-    if (Test-Path $skillDir) {{
-        Remove-Item -Path $skillDir -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "  [OK] Deleted $skillDir" -ForegroundColor Green
+    # /remember skill (Antigravity & Gemini CLI)
+    foreach ($skillDir in @(
+        (Join-Path $configDir "skills\\remember"),
+        (Join-Path $env:USERPROFILE ".gemini\\skills\\remember")
+    )) {{
+        if (Test-Path $skillDir) {{
+            Remove-Item -Path $skillDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "  [OK] Deleted $skillDir" -ForegroundColor Green
+        }}
     }}
 }}
 

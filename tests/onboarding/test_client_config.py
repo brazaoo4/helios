@@ -5,6 +5,7 @@ from src.onboarding.client_config import (
     get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
+    get_skill_paths,
     normalize_os_platform,
     resolve_server_base_url,
 )
@@ -80,6 +81,16 @@ def test_mcp_config_paths_and_snippets():
     assert get_directive_path("windsurf", "linux") == "~/.codeium/windsurf/memories/global_rules.md"
     assert get_directive_path("vscode", "linux") == "~/.github/copilot-instructions.md"
     assert get_directive_path("opencode", "linux") == "~/.config/opencode/AGENTS.md"
+
+    # Skill paths (Antigravity + Gemini CLI)
+    assert get_skill_paths("linux") == (
+        "~/.gemini/config/skills/remember/SKILL.md",
+        "~/.gemini/skills/remember/SKILL.md",
+    )
+    assert get_skill_paths("windows") == (
+        r"%USERPROFILE%\.gemini\config\skills\remember\SKILL.md",
+        r"%USERPROFILE%\.gemini\skills\remember\SKILL.md",
+    )
 
     # Snippets
     anti_cfg = get_mcp_config_snippet("antigravity", "https://helios.example.com")

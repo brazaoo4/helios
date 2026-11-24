@@ -4,6 +4,7 @@ from pathlib import Path
 
 import src.onboarding as ob
 from src.onboarding import (
+    DIRECTIVE_VERSION,
     SUPPORTED_CLIENTS,
     generate_client_bundle,
     generate_global_directive,
@@ -17,6 +18,7 @@ from src.onboarding import (
     get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
+    get_skill_paths,
     normalize_os_platform,
     resolve_server_base_url,
 )
@@ -25,12 +27,14 @@ from src.onboarding import (
 def test_onboarding_package_reexports_contract():
     """Verify that src.onboarding exports all expected public APIs and types."""
     expected_symbols = [
+        "DIRECTIVE_VERSION",
         "SUPPORTED_CLIENTS",
         "resolve_server_base_url",
         "normalize_os_platform",
         "get_mcp_config_path",
         "get_directive_path",
         "get_mcp_config_snippet",
+        "get_skill_paths",
         "generate_global_directive",
         "generate_remember_skill",
         "generate_guard_hook_script",
@@ -47,12 +51,14 @@ def test_onboarding_package_reexports_contract():
         assert sym in ob.__all__, f"'{sym}' not listed in src.onboarding.__all__"
 
     # Verify direct imports match module attributes
+    assert ob.DIRECTIVE_VERSION == DIRECTIVE_VERSION
     assert ob.SUPPORTED_CLIENTS == SUPPORTED_CLIENTS
     assert ob.resolve_server_base_url == resolve_server_base_url
     assert ob.normalize_os_platform == normalize_os_platform
     assert ob.get_mcp_config_path == get_mcp_config_path
     assert ob.get_directive_path == get_directive_path
     assert ob.get_mcp_config_snippet == get_mcp_config_snippet
+    assert ob.get_skill_paths == get_skill_paths
     assert ob.generate_global_directive == generate_global_directive
     assert ob.generate_remember_skill == generate_remember_skill
     assert ob.generate_guard_hook_script == generate_guard_hook_script
