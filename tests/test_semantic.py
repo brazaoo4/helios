@@ -123,8 +123,8 @@ def test_fetch_commit_diff_providers(monkeypatch):
     monkeypatch.setenv("HELIOS_GIT_TOKEN", "git-pat-123")
 
     def mock_handler(request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
-        if "api.github.com" in url:
+        host = request.url.host
+        if host == "api.github.com":
             return httpx.Response(
                 200,
                 text=(
@@ -132,12 +132,12 @@ def test_fetch_commit_diff_providers(monkeypatch):
                     "diff --git a/compose.yaml b/compose.yaml\n+ports\n"
                 ),
             )
-        if "gitlab.example.com" in url:
+        if host == "gitlab.example.com":
             return httpx.Response(
                 200,
                 json=[{"new_path": "compose.yaml", "old_path": "compose.yaml", "diff": "@@ -1 +1 @@\n+port"}],
             )
-        if "git.internal.lan" in url:
+        if host == "git.internal.lan":
             return httpx.Response(200, text="diff --git a/compose.yaml b/compose.yaml\n+ok\n")
         return httpx.Response(404)
 

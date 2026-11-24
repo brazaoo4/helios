@@ -13,7 +13,8 @@ def test_http_setup_endpoint_open_mode():
         assert res.headers["content-type"].startswith("text/markdown")
         content = res.text
         assert "Helios AI-Driven Client Onboarding" in content
-        assert "http://helios.local:8000" in content
+        assert "http://helios.local:8000/mcp" in content
+        assert "http://helios.local:8000/setup.sh" in content
         assert "mcp_config.json" in content
         assert "name: remember" in content
         assert "manage_git_webhooks" in content
@@ -35,7 +36,8 @@ def test_http_setup_endpoint_with_auth_and_no_leak(monkeypatch):
         content = res.text
 
         # Base URL must be correctly resolved from headers
-        assert "https://helios.internal.net" in content
+        assert "https://helios.internal.net/mcp" in content
+        assert "https://helios.internal.net/setup.sh" in content
 
         # CRITICAL ZERO-LEAK CHECK: The actual secret key must NEVER be printed!
         assert "super-secret-production-token-999" not in content
