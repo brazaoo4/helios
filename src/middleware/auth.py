@@ -34,14 +34,12 @@ def _is_origin_allowed(origin: str) -> bool:
 def _constant_time_equals(candidate: str | None, secret: str | None) -> bool:
     if candidate is None or secret is None:
         return candidate is secret
-    c_digest = hmac.digest(b"helios-auth-cmp", candidate.encode("utf-8"), "sha256")
-    s_digest = hmac.digest(b"helios-auth-cmp", secret.encode("utf-8"), "sha256")
-    return hmac.compare_digest(c_digest, s_digest)
+    return hmac.compare_digest(candidate.encode("utf-8"), secret.encode("utf-8"))
 
 
 def is_request_authenticated(request: Request) -> bool:
     """
-    Validate request credentials against HELIOS_API_KEY using constant-time digest comparison.
+    Validate request credentials against HELIOS_API_KEY using constant-time comparison.
     Returns True if HELIOS_API_KEY is unset (open local/mesh mode) or if credentials match:
       1. Header: `Authorization: Bearer <key>`
       2. Query Parameter: `?token=<key>`
