@@ -1,5 +1,6 @@
 """Helios AI-driven client onboarding package."""
 
+from src import DIRECTIVE_VERSION
 from src.onboarding.bundles import (
     generate_client_bundle,
     generate_setup_markdown,
@@ -13,6 +14,7 @@ from src.onboarding.client_config import (
     get_directive_path,
     get_mcp_config_path,
     get_mcp_config_snippet,
+    get_skill_paths,
     normalize_os_platform,
     resolve_server_base_url,
     validate_onboarding_params,
@@ -32,6 +34,7 @@ from src.onboarding.templates import (
 )
 
 __all__ = [
+    "DIRECTIVE_VERSION",
     "SUPPORTED_CLIENTS",
     "VALID_CLIENTS",
     "VALID_ROLES",
@@ -49,6 +52,7 @@ __all__ = [
     "get_directive_path",
     "get_mcp_config_path",
     "get_mcp_config_snippet",
+    "get_skill_paths",
     "normalize_os_platform",
     "resolve_server_base_url",
     "validate_onboarding_params",

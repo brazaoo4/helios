@@ -75,6 +75,7 @@ def test_bash_setup_execution_in_temp_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(fake_home))
 
     # Pre-create client directories to test auto-detection and multi-client configuration
+    (fake_home / ".cursor").mkdir(parents=True)
     (fake_home / ".codex").mkdir(parents=True)
     (fake_home / ".codeium" / "windsurf").mkdir(parents=True)
     (fake_home / ".config" / "opencode").mkdir(parents=True)
@@ -101,6 +102,10 @@ def test_bash_setup_execution_in_temp_home(tmp_path, monkeypatch):
     gemini_md = gemini_cfg / "GEMINI.md"
     assert gemini_md.exists()
     assert "<!-- HELIOS:START -->" in gemini_md.read_text(encoding="utf-8")
+
+    ag_skill_file = gemini_cfg / "skills" / "remember" / "SKILL.md"
+    assert ag_skill_file.exists()
+    assert "name: remember" in ag_skill_file.read_text(encoding="utf-8")
 
     skill_file = fake_home / ".gemini" / "skills" / "remember" / "SKILL.md"
     assert skill_file.exists()
@@ -139,3 +144,28 @@ def test_bash_setup_execution_in_temp_home(tmp_path, monkeypatch):
     opencode_json = fake_home / ".config" / "opencode" / "opencode.json"
     assert opencode_json.exists()
     assert (fake_home / ".config" / "opencode" / "AGENTS.md").exists()
+
+
+def test_bash_setup_does_not_create_absent_cursor_or_gemini_dirs(tmp_path, monkeypatch):
+    # 1. client="all" without ~/.cursor must not create ~/.cursor (unless cursor binary is on PATH)
+    home_all = tmp_path / "home_all"
+    home_all.mkdir()
+    monkeypatch.setenv("HOME", str(home_all))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    script_all = tmp_path / "setup_all.sh"
+    script_all.write_text(generate_setup_bash("https://helios.example.com", client="all"), encoding="utf-8")
+    subprocess.run(["bash", str(script_all)], capture_output=True, text=True, check=True)
+    assert (home_all / ".gemini" / "config" / "skills" / "remember" / "SKILL.md").exists()
+    assert not (home_all / ".cursor").exists()
+
+    # 2. client="cursor" without ~/.gemini must not create ~/.gemini
+    home_cursor = tmp_path / "home_cursor"
+    home_cursor.mkdir()
+    monkeypatch.setenv("HOME", str(home_cursor))
+
+    script_cursor = tmp_path / "setup_cursor.sh"
+    script_cursor.write_text(generate_setup_bash("https://helios.example.com", client="cursor"), encoding="utf-8")
+    subprocess.run(["bash", str(script_cursor)], capture_output=True, text=True, check=True)
+    assert (home_cursor / ".cursor" / "rules" / "helios.mdc").exists()
+    assert not (home_cursor / ".gemini").exists()

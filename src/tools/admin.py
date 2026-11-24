@@ -208,7 +208,9 @@ def get_client_setup_bundle(
     ] = "all",
     os_platform: Annotated[
         Literal["windows", "linux", "macos", "auto"],
-        Field(description="Target operating system for config file paths."),
+        Field(
+            description="Target operating system for config file paths ('auto' uses the server OS, which is Linux in Docker; pass 'windows' or 'macos' explicitly for remote clients)."
+        ),
     ] = "auto",
     instance_role: Annotated[
         Literal["workstation", "server-cli"],
@@ -217,15 +219,15 @@ def get_client_setup_bundle(
         ),
     ] = "workstation",
     action: Annotated[
-        Literal["install_or_update", "switch_role", "uninstall"],
+        Literal["install_or_update", "update_directives", "switch_role", "uninstall"],
         Field(
-            description="Lifecycle action: 'install_or_update' (idempotently set or refresh client config and directive blocks), 'switch_role' (change machine role between 'workstation' and 'server-cli'), or 'uninstall' (instructions to cleanly remove Helios from MCP config, strip the HELIOS marker block, and remove the /remember skill)."
+            description="Lifecycle action: 'install_or_update' (full MCP config + directive + skill bundle), 'update_directives' (compact directive & skill refresh without dumping all MCP configs), 'switch_role' (change machine role between 'workstation' and 'server-cli'), or 'uninstall' (surgical removal instructions)."
         ),
     ] = "install_or_update",
 ) -> str:
     """
     Generate read-only client onboarding configs, idempotent global agent directives (<!-- HELIOS:START -->), and /remember skill files for local AI tools.
-    Supports full client lifecycle management via action: 'install_or_update' outputs non-destructive MCP and directive snippets tailored to client, os_platform, and instance_role ('workstation' vs headless 'server-cli'); 'switch_role' updates role-specific rules; 'uninstall' provides surgical removal instructions that preserve user custom rules.
+    Supports full client lifecycle management via action: 'install_or_update' outputs non-destructive MCP and directive snippets tailored to client, os_platform, and instance_role ('workstation' vs headless 'server-cli'); 'update_directives' returns a lean directive/skill refresh; 'switch_role' updates role-specific rules; 'uninstall' provides surgical removal instructions that preserve user custom rules.
     Use get_client_setup_bundle to install, reconfigure, or uninstall Helios on a client machine; use manage_server_config to modify server-side settings, or export_bundle to back up the database.
     """
     base_url = resolve_server_base_url()

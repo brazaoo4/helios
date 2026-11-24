@@ -194,6 +194,20 @@ def get_directive_path(client: str, os_platform: str = "auto") -> str:
     return "~/.gemini/config/GEMINI.md"
 
 
+def get_skill_paths(os_platform: str = "auto") -> tuple[str, str]:
+    """Return (antigravity_skill_path, gemini_cli_skill_path) for the /remember skill."""
+    plat = normalize_os_platform(os_platform)
+    if plat == "windows":
+        return (
+            r"%USERPROFILE%\.gemini\config\skills\remember\SKILL.md",
+            r"%USERPROFILE%\.gemini\skills\remember\SKILL.md",
+        )
+    return (
+        "~/.gemini/config/skills/remember/SKILL.md",
+        "~/.gemini/skills/remember/SKILL.md",
+    )
+
+
 def get_mcp_config_snippet(
     client: str,
     base_url: str,
@@ -298,6 +312,7 @@ __all__ = [
     "get_directive_path",
     "get_mcp_config_path",
     "get_mcp_config_snippet",
+    "get_skill_paths",
     "normalize_os_platform",
     "resolve_server_base_url",
     "validate_onboarding_params",

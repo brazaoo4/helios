@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from src import __version__
+from src import DIRECTIVE_VERSION, __version__
 from src.config import get_gemini_api_key
 from src.db import (
     db_audit_memories,
@@ -96,7 +96,7 @@ def recall_memories(
         str,
         Field(
             default="",
-            description="Client directive version from the local <!-- HELIOS:START --> header (e.g., '1.5.0'). Leave empty if unversioned/legacy.",
+            description="Client directive version from the local <!-- HELIOS:START --> header (e.g., '2.0'). Leave empty if unversioned/legacy.",
         ),
     ] = "",
     max_words: Annotated[
@@ -134,12 +134,16 @@ def recall_memories(
             else:
                 clean_client_ver = raw_client_ver
                 ver_label = f"v{clean_client_ver}" if clean_client_ver else "unversioned/legacy"
+            clean_directive_ver = DIRECTIVE_VERSION.strip().lstrip("v")
             clean_server_ver = __version__.strip().lstrip("v")
-            if clean_client_ver != clean_server_ver:
+            if clean_client_ver != clean_directive_ver:
                 drift_banner = (
                     f"\n\n> [CLIENT DIRECTIVE DRIFT: Local Helios directives ({ver_label}) are out of sync with "
-                    f"Helios Server v{clean_server_ver}. Call get_client_setup_bundle(action='install_or_update') "
-                    "to update your local directive file. Do NOT call save_memory for local client config updates.]"
+                    f"Helios directive protocol v{clean_directive_ver} (Helios Server v{clean_server_ver}). "
+                    "Call get_client_setup_bundle(action='update_directives', client='<your_client>', "
+                    "instance_role='<workstation|server-cli>') preserving your current role ('Server CLI' -> 'server-cli'), "
+                    "or re-run setup.sh/setup.ps1 to update your local directive file. "
+                    "Do NOT call save_memory for local client config updates.]"
                 )
 
         if not memories:

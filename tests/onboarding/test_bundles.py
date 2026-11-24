@@ -4,7 +4,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from src import __version__
+from src import DIRECTIVE_VERSION, __version__
 from src.server import get_client_setup_bundle, recall_memories, save_memory
 
 
@@ -22,8 +22,9 @@ def test_get_client_setup_bundle_tool():
     assert "GEMINI.md" in bundle_all
     assert "AGENTS.md" in bundle_all
     assert "copilot-instructions.md" in bundle_all
-    assert f'directive_version="{__version__}"' in bundle_all
-    assert f"(v{__version__})" in bundle_all
+    assert "~/.gemini/config/skills/remember/SKILL.md" in bundle_all
+    assert f'directive_version="{DIRECTIVE_VERSION}"' in bundle_all
+    assert f"(v{DIRECTIVE_VERSION})" in bundle_all
     assert "name: remember" in bundle_all
     assert "manage_git_webhooks" in bundle_all
 
@@ -34,8 +35,8 @@ def test_get_client_setup_bundle_tool():
         instance_role="server-cli",
     )
     assert "~/.gemini/config/mcp_config.json" in bundle_server
-    assert f'directive_version="{__version__}"' in bundle_server
-    assert f"(Server CLI v{__version__})" in bundle_server
+    assert f'directive_version="{DIRECTIVE_VERSION}"' in bundle_server
+    assert f"(Server CLI v{DIRECTIVE_VERSION})" in bundle_server
     assert "docker logs --tail=50" in bundle_server
     assert "Cursor" not in bundle_server
 
@@ -57,7 +58,7 @@ def test_get_client_setup_bundle_tool():
     assert "Remove `/remember` Skill" in bundle_uninstall
     assert "Helios has been cleanly uninstalled" in bundle_uninstall
 
-    # 5. Action: switch_role
+    # 5. Action: switch_role (compact output without MCP configs or webhooks)
     bundle_switch = get_client_setup_bundle(
         client="cursor",
         os_platform="linux",
@@ -67,6 +68,50 @@ def test_get_client_setup_bundle_tool():
     assert "Lifecycle Action**: `switch_role`" in bundle_switch
     assert "Instance Role**: `server-cli`" in bundle_switch
     assert "docker logs --tail=50" in bundle_switch
+    assert "## 1. Target Directive Path(s)" in bundle_switch
+    assert "mcpServers" not in bundle_switch
+    assert "manage_git_webhooks" not in bundle_switch
+
+
+def test_update_directives_action_and_zero_leak(monkeypatch):
+    # Antigravity update_directives includes directive + /remember skill + 1-liner tip, omits MCP configs & webhooks
+    bundle_ag = get_client_setup_bundle(
+        client="antigravity",
+        os_platform="linux",
+        instance_role="server-cli",
+        action="update_directives",
+    )
+    assert "Lifecycle Action**: `update_directives`" in bundle_ag
+    assert f"(Server CLI v{DIRECTIVE_VERSION})" in bundle_ag
+    assert "~/.gemini/config/GEMINI.md" in bundle_ag
+    assert "~/.gemini/config/skills/remember/SKILL.md" in bundle_ag
+    assert "helios_guard.py" in bundle_ag
+    assert "setup.sh?role=server-cli&client=antigravity" in bundle_ag
+    assert "mcpServers" not in bundle_ag
+    assert "manage_git_webhooks" not in bundle_ag
+
+    # Non-Antigravity client omits /remember skill
+    bundle_cursor = get_client_setup_bundle(
+        client="cursor",
+        os_platform="win",
+        action="update_directives",
+    )
+    assert r"%USERPROFILE%\.cursor\rules\helios.mdc" in bundle_cursor
+    assert "name: remember" not in bundle_cursor
+
+    # os_platform normalization applies to MCP & directive paths in install_or_update too
+    bundle_win = get_client_setup_bundle(
+        client="antigravity",
+        os_platform="win",
+        action="install_or_update",
+    )
+    assert r"%USERPROFILE%\.gemini\config\mcp_config.json" in bundle_win
+
+    # Zero-leak check when HELIOS_API_KEY is set
+    monkeypatch.setenv("HELIOS_API_KEY", "super-secret-bundle-token-999")
+    bundle_auth = get_client_setup_bundle(client="antigravity", action="update_directives")
+    assert "super-secret-bundle-token-999" not in bundle_auth
+    assert "token=<YOUR_HELIOS_API_KEY>" in bundle_auth
 
 
 def test_directive_version_synced_with_package_and_container():
@@ -85,11 +130,11 @@ def test_directive_version_synced_with_package_and_container():
     dockerfile_text = (repo_root / "Dockerfile").read_text(encoding="utf-8")
     assert "pyproject.toml" in dockerfile_text
 
-    # Generated GEMINI.md directive block must match server __version__ and pass recall_memories without drift
+    # Generated GEMINI.md directive block must match DIRECTIVE_VERSION and pass recall_memories without drift
     bundle = get_client_setup_bundle(client="antigravity", instance_role="workstation")
     match = re.search(r'directive_version="([^"]+)"', bundle)
     assert match is not None
-    assert match.group(1) == package_version
+    assert match.group(1) == DIRECTIVE_VERSION
 
     save_memory(scope="sync-check", category="fact", content="Version sync smoke test", subject="ver-sync")
     recalled = recall_memories(scope="sync-check", directive_version=match.group(1))

@@ -4,7 +4,7 @@ import re
 
 from starlette.testclient import TestClient
 
-from src import __version__
+from src import DIRECTIVE_VERSION, __version__
 from src.db import get_connection, set_alias
 from src.exporter import get_export_dir
 from src.server import (
@@ -32,29 +32,37 @@ def test_cold_start_onboarding_signal():
     assert "No active memories found for scope 'other_scope'." in recalled_non_empty
 
 
-def test_recall_memories_directive_drift_detection():
+def test_recall_memories_directive_drift_detection(monkeypatch):
     save_memory(scope="webapp", category="fact", content="Frontend runs on port 3000", subject="web-port")
 
     # 1. Legacy client (directive_version omitted / empty) -> shows drift banner
     recalled_legacy = recall_memories(scope="webapp")
     assert "CLIENT DIRECTIVE DRIFT" in recalled_legacy
     assert "unversioned/legacy" in recalled_legacy
+    assert f"directive protocol v{DIRECTIVE_VERSION}" in recalled_legacy
     assert f"Helios Server v{__version__}" in recalled_legacy
+    assert "action='update_directives'" in recalled_legacy
+    assert "Server CLI" in recalled_legacy
     assert "Do NOT call save_memory for local client config updates" in recalled_legacy
 
-    # 2. Outdated client (e.g. 1.2.0) -> shows drift banner with v1.2.0
-    recalled_old = recall_memories(scope="webapp", directive_version="1.2.0")
+    # 2. Outdated client (e.g. 1.11.1) -> shows drift banner with v1.11.1
+    recalled_old = recall_memories(scope="webapp", directive_version="1.11.1")
     assert "CLIENT DIRECTIVE DRIFT" in recalled_old
-    assert "v1.2.0" in recalled_old
+    assert "v1.11.1" in recalled_old
 
-    # 3. Matching client version -> NO drift banner
-    recalled_current = recall_memories(scope="webapp", directive_version=__version__)
+    # 3. Matching directive protocol version -> NO drift banner
+    recalled_current = recall_memories(scope="webapp", directive_version=DIRECTIVE_VERSION)
     assert "CLIENT DIRECTIVE DRIFT" not in recalled_current
     assert "Frontend runs on port 3000" in recalled_current
 
-    # 4. Matching client version with 'v' prefix -> NO drift banner
-    recalled_v_prefix = recall_memories(scope="webapp", directive_version=f"v{__version__}")
+    # 4. Matching directive protocol version with 'v' prefix -> NO drift banner
+    recalled_v_prefix = recall_memories(scope="webapp", directive_version=f"v{DIRECTIVE_VERSION}")
     assert "CLIENT DIRECTIVE DRIFT" not in recalled_v_prefix
+
+    # 5. Server patch/minor bumps do NOT trigger drift when directive protocol matches
+    monkeypatch.setattr("src.tools.memory.__version__", "1.99.0")
+    recalled_bumped_server = recall_memories(scope="webapp", directive_version=DIRECTIVE_VERSION)
+    assert "CLIENT DIRECTIVE DRIFT" not in recalled_bumped_server
 
 
 def test_mcp_tools_lifecycle():

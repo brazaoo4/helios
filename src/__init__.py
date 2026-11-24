@@ -23,4 +23,5 @@ def _resolve_version() -> str:
 
 
 __version__ = _resolve_version()
+DIRECTIVE_VERSION = "2.0"
 

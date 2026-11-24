@@ -287,9 +287,9 @@ Helios encloses its global agent instructions inside idempotent HTML comment del
 
 ```markdown
 <!-- HELIOS:START -->
-# Global Agent Directives — Helios Memory Protocol (v1.5.0)
+# Global Agent Directives — Helios Memory Protocol (v2.0)
 You are connected to Helios, a centralized token-budgeted memory engine.
-1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>", directive_version="1.5.0")` at task start.
+1. Pre-Flight Check: Always call `recall_memories(scope="<current_repo>", directive_version="2.0")` at task start.
 2. Stale Protocol: When a memory is marked `[STALE]`, inspect `anchor_files` before relying on it.
 3. Write-Through DoD: Any change to ports, stacks, dependencies, or bug fixes is INCOMPLETE until `save_memory()` is called.
 4. Token Diet: Keep facts atomic (<= 25 words).
@@ -297,6 +297,8 @@ You are connected to Helios, a centralized token-budgeted memory engine.
 6. Distillation Audit: Run `/remember` before clearing context or after major milestones.
 <!-- HELIOS:END -->
 ```
+
+*Directive protocol versioning (`v2.0`) is decoupled from server patch releases so clients only see a drift notice when the directive protocol itself changes.*
 
 * **Switch Machine Role (`workstation` ↔ `server-cli`)**:
   *"Run `get_client_setup_bundle(action='switch_role', instance_role='server-cli')` and update my directives."*
@@ -434,7 +436,7 @@ Helios exposes 11 FastMCP tools with strict Pydantic field descriptions, worker-
 | `manage_scope_alias` | `alias`, `canonical_scope`, `action` | Manage aliases (`set`, `remove`, `list` with active/stale counts) or migrate scopes (`rename`). |
 | `manage_server_config` | `action`, `key`, `value` | View or modify runtime settings live (`list`, `set`, `reset`) with automatic secret redaction. |
 | `manage_git_webhooks` | `action`, `repos`, `include_forks` | Interactively list owned repos and enable/disable drift webhooks on GitHub, Forgejo, Gitea, or GitLab. |
-| `get_client_setup_bundle` | `client`, `os_platform`, `instance_role`, `action` | Generate client MCP configs, `GEMINI.md` directives, and `/remember` skill (`install_or_update`, `switch_role`, `uninstall`). |
+| `get_client_setup_bundle` | `client`, `os_platform`, `instance_role`, `action` | Generate client MCP configs, `GEMINI.md` directives, and `/remember` skill (`install_or_update`, `update_directives`, `switch_role`, `uninstall`). |
 | `export_bundle` | _(none)_ | Trigger an online SQLite backup (`src_conn.backup`) and package `helios_portable_bundle.tar.gz`. |
 
 <details>
@@ -508,7 +510,7 @@ get_client_setup_bundle(
     ] = "all",
     os_platform: Literal["linux", "macos", "windows", "auto"] = "auto",
     instance_role: Literal["workstation", "server-cli"] = "workstation",
-    action: Literal["install_or_update", "switch_role", "uninstall"] = "install_or_update",
+    action: Literal["install_or_update", "update_directives", "switch_role", "uninstall"] = "install_or_update",
 ) -> str
 
 # 10. Generate crash-safe portable backup archive

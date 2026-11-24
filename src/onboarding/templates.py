@@ -1,6 +1,6 @@
 """Global directive, skill, and cognitive guard hook script templates."""
 
-from src import __version__
+from src import DIRECTIVE_VERSION
 from src.config import get_word_limit
 
 
@@ -15,7 +15,7 @@ def generate_global_directive(
     """
     role = instance_role.strip().lower()
     limit = word_limit if word_limit is not None else get_word_limit()
-    ver = (version or __version__).strip().lstrip("v")
+    ver = (version or DIRECTIVE_VERSION).strip().lstrip("v")
 
     if role == "server-cli":
         body = (
@@ -67,7 +67,7 @@ def generate_global_directive(
 
 
 def generate_remember_skill(word_limit: int | None = None) -> str:
-    """Generate the ~/.gemini/skills/remember/SKILL.md skill definition."""
+    """Generate the /remember skill definition (Antigravity ~/.gemini/config/skills/remember/SKILL.md and Gemini CLI ~/.gemini/skills/remember/SKILL.md)."""
     limit = word_limit if word_limit is not None else get_word_limit()
     return (
         "---\n"

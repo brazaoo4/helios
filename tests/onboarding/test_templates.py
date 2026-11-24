@@ -1,6 +1,6 @@
 """Unit tests for onboarding templates (global directives, remember skill, guard hook)."""
 
-from src import __version__
+from src import DIRECTIVE_VERSION
 from src.onboarding.templates import (
     generate_global_directive,
     generate_remember_skill,
@@ -11,8 +11,11 @@ def test_global_directive_roles():
     workstation_directive = generate_global_directive("workstation")
     assert workstation_directive.startswith("<!-- HELIOS:START -->")
     assert workstation_directive.strip().endswith("<!-- HELIOS:END -->")
-    assert f'directive_version="{__version__}"' in workstation_directive
-    assert f"(v{__version__})" in workstation_directive
+    assert f'directive_version="{DIRECTIVE_VERSION}"' in workstation_directive
+    assert f"(v{DIRECTIVE_VERSION})" in workstation_directive
+
+    custom_ver_directive = generate_global_directive("workstation", version="9.9")
+    assert 'directive_version="9.9"' in custom_ver_directive
     assert "Never store host-local client setup states" in workstation_directive
     assert "Pre-Flight Memory Check" in workstation_directive
     assert "Write-Through Memory Capture" in workstation_directive
