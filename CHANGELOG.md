@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.12.1](https://github.com/brazaoo4/helios/compare/v1.12.0...v1.12.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **security:** resolve CodeQL alerts for auth hashing and test URL checks ([40376e6](https://github.com/brazaoo4/helios/commit/40376e616bbfc4e209d3b55a7e9dc6eebc0b8e55))
+* **security:** resolve CodeQL alerts for auth hashing and test URL checks ([06a029d](https://github.com/brazaoo4/helios/commit/06a029d16dd9f41bd0538cafce082067e6e250d8))
+* **security:** use direct hmac.compare_digest in auth comparison ([496ab5e](https://github.com/brazaoo4/helios/commit/496ab5e283e6f8d02e308864f627b2383eacc1cf))
+
 ## [1.12.0](https://github.com/brazaoo4/helios/compare/v1.11.1...v1.12.0) (2026-11-24)
 
 
