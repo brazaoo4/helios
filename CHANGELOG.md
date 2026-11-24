@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.12.0](https://github.com/brazaoo4/helios/compare/v1.11.1...v1.12.0) (2026-11-24)
+
+
+### Features
+
+* **onboarding:** decouple directive versioning and harden client setup bundles ([bb91ed8](https://github.com/brazaoo4/helios/commit/bb91ed8a56f2fb55207755f068a6d858617bc530))
+* **onboarding:** decouple directive versioning and harden client setup bundles ([0f2008c](https://github.com/brazaoo4/helios/commit/0f2008c9900a86ce8b5ee5bfb7329a4d35ad7614))
+
 ## [1.11.1](https://github.com/brazaoo4/helios/compare/v1.11.0...v1.11.1) (2026-11-17)
 
 
